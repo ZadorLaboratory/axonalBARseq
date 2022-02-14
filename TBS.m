@@ -344,6 +344,8 @@ classdef TBS % Terminal BARseq
             % Shift x-y to row-col
             sz(1:2) = fliplr(sz(1:2));
             
+            % 02/14/2022: add round
+            dotMat = round(dotMat);
             TF = dotMat < 1 | dotMat > sz;
             TF = any(TF,2);
         end
@@ -428,8 +430,7 @@ classdef TBS % Terminal BARseq
                         im = im(:,:,axLim(1):axLim(2));
                     otherwise
                         error('Currently only support 3 axis')
-                end
-                
+                end                
             end
         end
         
@@ -634,6 +635,60 @@ classdef TBS % Terminal BARseq
                 matIn(I),cellIn(I),'UniformOutput',false);
         end
         
+        %% Function:    nonzeroAvgFilter
+        % Discription:  average filter of non-zero elements
+        function im = nonzeroAvgFilter(im,h,exclude0)
+            % Input & output:  im, mat, image
+            %           h, mat, filter
+            %           exclude0, logical, whether set 0-pixel in the
+            %           output to 0
+            
+            TF = im == 0;
+            
+            % Sum
+            im2 = convn(im,h,'same');
+            
+            % number of voxel/pixel
+            fh = @(X) cast(X,class(im));
+            n = fh(im > 0);
+            n = convn(n,h,'same');
+            
+            im = im2./n;
+            
+            % Set the 0-pixel back to 0
+            if nargin < 3 || exclude0                
+                im(TF)=0;
+            end
+            
+            % Delete pixel with nan
+            TF = isnan(im);
+            im(TF) = 0;
+        end
+                
+        %% Function:    getMedEdges
+        % Discription:  get middle of edges
+        function edges = getMedEdges(edges)
+            % Input & output: edges, vector
+            
+            edges = edges(1:end-1)+edges(2:end);
+            edges = edges./2;
+        end
+        
+        %% Function:    axLabelSettings
+        % Discription:  Set front and size for all axes
+        function axLabelSettings(frontName,frontSize)
+            % Input:    frontName, str, front name
+            %           fontSize, num, front size
+            
+            ax = {'XAxis'; 'YAxis'; 'ZAxis'};
+            
+            g = gca;
+            for i = 1:numel(ax)
+                g.(ax{i}).Label.FontName = frontName;
+                g.(ax{i}).Label.FontSize = frontSize;
+            end
+        end
+        
     end
     
     methods (Static)    % Default settings ================================
@@ -793,6 +848,40 @@ classdef TBS % Terminal BARseq
             % Settinf for glia --------------------------------------------
             % Radius for glia cells
             bcSetting.gliaR = 200;         
+        end
+        
+        %% Function:    getRefSetting
+        % Discription:  get reference settings
+        function refSetting = getRefSetting(directory)
+            % Input:    directory, str, Directory of reference map & txt
+            % Output:   refSetting, struct, reference settings
+            
+            refSetting = [];
+            
+            refSetting.directory = directory;
+            
+            % Reference scale of these maps: micron per pixel
+            refSetting.refScale = 1/25;
+            
+            % reference map: allen ccf3, 25 um, nissle
+            refSetting.nisslName = 'ara_nissl_25.nrrd';
+            
+            % Annotation map, same resolution
+            refSetting.annoName = 'annotation_25.nrrd';
+            
+            % Average template, same resolution
+            refSetting.avgName = 'average_template_25.nrrd';
+            
+            % Annotation structure ----------------------------------------
+            % Name for txt file
+            refSetting.annoTxtName = 'Allen_api_MouseBrainAtlas.txt';
+            
+            % Annotation structure
+            cd(directory);
+            annoStruct = fileread(refSetting.annoTxtName);
+            annoStruct = jsondecode(annoStruct);
+            annoStruct = annoStruct.msg;
+            refSetting.annoStruct = annoStruct;
         end
         
         %% Function:    mouseSlideNum
@@ -967,6 +1056,93 @@ classdef TBS % Terminal BARseq
             v = v(I);
                         
             [~,I] = ismember(tileNum,v);
+        end
+        
+        %% Function:    getRegVoxel
+        % Discription:  get voxel from brain regions for analysis
+        % CtxI, CtxC, Thal, Str, Mb
+        function regVoxel = getRegVoxel(annoMap,annoStruct)
+            % Input:    annoMap, mat, coronal annotation map
+            %           annoStruct, struct, structure of annotation info
+            % Output:   regVoxel, cell, logical stack of different brain
+            % regions
+            
+            % Region fro 65A analysis
+            regName = {'Isocortex'; 'Thalamus'; 'Striatum'; 'Midbrain'};
+            
+            % Voxel for each region
+            id = cellfun(@(X) TBS.findAnnoID(annoStruct,X),regName,...
+                'Uniformoutput',false);
+            regVoxel = cellfun(@(X) ismember(annoMap,X),id,...
+                'Uniformoutput',false);
+                       
+            % Get CtxI/C; ipsi is on the right of CCF
+            regVoxel = [regVoxel(1);regVoxel];
+            TF = TBS.isLeftIm(annoMap);
+            regVoxel{1} = regVoxel{1} & ~TF;
+            regVoxel{2} = regVoxel{2} & TF;
+            
+            % % Visualize region for grouping
+            % test = regVoxel{1};
+            % for i = 2:numel(regVoxel)
+            %     iTest = regVoxel{i}.*i;
+            %     test = max(test,iTest);
+            % end
+            % test = uint8(test);
+            % MIJ.createImage(test)
+        end
+        
+        %% Function:    isLocalProj
+        % Discription:  whether a rolony is consider local projection
+        function TF = isLocalProj(mlapdDot,mlapdSoma,localRng)
+            % Update 01122022, use soma location and range
+            % Input:    mlapdDot, mat, ML/AP/Depth coordinates of rolony
+            %           mlapdSoma,
+            % Output:   TF, logicalm, whether its local projection
+            
+            % Only use ML/AP-coordinates
+            mlapdDot = mlapdDot(:,1:2);
+            mlapdSoma = mlapdSoma(:,1:2);
+            
+            % Find injection center
+            TF = any(mlapdSoma,2);
+            mlapdSoma = mlapdSoma(TF,:);
+            injCenter = median(mlapdSoma,1);
+            
+            D = pdist2(mlapdDot,injCenter);
+            TF = D < localRng;
+        end
+        
+        %% Function:    loadMLAPDim
+        % Discription:  load ctxML/AP/DepthPrctile image without fold in
+        % areas
+        function [ctxML, ctxAP, ctxDepthPrctile] = loadMLAPDim(directory,refSetting)
+            % Input:    directory, str, directory for ctxML/AP/DepthPrctile
+            % image
+            %           refSetting, struct
+            % Output:   ctxML/AP/DepthPrctile, image
+            
+            cd(directory);
+            load('ctxML.mat'); 
+            load('ctxAP.mat'); 
+            load('ctxDepthPrctile.mat');
+            
+            % Annotation map
+            annoMap = TBS.getRefMap('anno',refSetting);
+            
+            % Annotation structure
+            annoStruct = refSetting.annoStruct;          
+            
+            % Delete the fold in portion for better visualization
+            roi = {'Retrosplenial area, ventral part', ...
+                'Anterior cingulate area',...
+                'Retrosplenial area, dorsal part'};
+            id = cellfun(@(X) TBS.findAnnoID(annoStruct,X),roi,'Uniformoutput',false);
+            id = vertcat(id{:});
+            roi = ismember(annoMap,id);
+            
+            % Delete from ML/AP/Depth image
+            ctxML(roi) = 0; ctxAP(roi) = 0; ctxDepthPrctile(roi) = 0;
         end
         
     end
@@ -4678,6 +4854,50 @@ classdef TBS % Terminal BARseq
             var(row) = bscallTbl.(varName)(id2);
         end
         
+        %%  Function:   hasOverlap
+        % Discription:  find BC with identical BC with more 0
+        function TF = hasOverlap(BCin)
+            % Using ismember instead of for-loop to speed up
+            % Input:    BCin, mat, one row per BC
+            % Output:   TF, logcial, BC with identical BC and extra 0
+            
+            % Find 0 position pattern
+            pos0i = BCin == 0;
+            [pos0i,~,ic] = unique(pos0i,'row');
+            
+            % BC with extra 0 will be identical to other BC without
+            % 0-position column, not the other way around
+            TF = {};
+            parfor i = 1:size(pos0i,1) % parfor
+                
+                iPos0 = pos0i(i,:);
+                
+                % Row with the 0 pattern
+                rowi = ic == i;
+                iBCin = BCin(rowi,:);
+                
+                % Delete 0 column
+                iBCin = iBCin(:,~iPos0);
+                BCin2 = BCin(:,~iPos0);
+                
+                [Lia,Lcob] = ismember(BCin2,iBCin,'rows');
+                
+                % Count overlap
+                Lcob = Lcob(Lia);
+                n = accumarray(Lcob,1,[size(iBCin,1),1]);
+                % Find more than 1 overlap (ttself is a match)
+                n = n > 1;
+                
+                rowi(rowi) = n;
+                
+                TF{1,i} = rowi;
+            end
+            
+            % Combine ovelrap from each pattern
+            TF = horzcat(TF{:});
+            TF = any(TF,2);
+        end
+        
         %% Function:    getBscallTable (main)
         % Discription:  get bscall table, with barcode,x,y
         function bscallTable = getBscallTable(tfBscallTable,...
@@ -4780,6 +5000,10 @@ classdef TBS % Terminal BARseq
                     id = id(TF,:);
                     
                     % Merge rows ------------------------------------------
+                    % 10052021 ver27: add hasOveralp
+                    TF = TBS.hasOverlap(id);
+                    id = id(~TF,:);
+                    
                     % mergeBClogical(bc,tolerate0);
                     id = TBS.mergeIDlogical(id,true);
                 end
@@ -6020,7 +6244,7 @@ classdef TBS % Terminal BARseq
         
     end
     
-    methods (Static)
+    methods (Static)    % ComebineBC ======================================
         %% Function:    isDegenerateBC
         % Discription:  whether a BC is degenerate BC
         function TF = isDegenerateBC(BC,n,tolerate0)
@@ -6514,51 +6738,71 @@ classdef TBS % Terminal BARseq
             
             tbl.xyz = xyz;
         end
-        
-        %%  Function:   hasOverlap
-        % Discription:  find BC with identical BC with more 0
-        function TF = hasOverlap(BCin)
-            % Using ismember instead of for-loop to speed up
-            % Input:    BCin, mat, one row per BC
-            % Output:   TF, logcial, BC with identical BC and extra 0
+                
+        %% Function:    vol2reg
+        % Discription:  change coordinates from volume space to reference
+        % map
+        function tbl = vol2reg(tbl,reg2AllenTform,scaleFactor,imageSetting,sysSetting)
+            % Note: resolution is the same as the reference map
+            % Input & output: tbl, table, with coordinates
+            %           reg2AllenTform, struct, info register to reference
+            %           map like Allen 
+            %           scaleFactor, num, scaling factor from original
+            %           image to volume
+            %           imageSetting/sysSetting,struct
             
-            % Find 0 position pattern
-            pos0i = BCin == 0;
-            [pos0i,~,ic] = unique(pos0i,'row');
+            disp('Function vol2reg on progress...');
             
-            % BC with extra 0 will be identical to other BC without
-            % 0-position column, not the other way around
-            TF = {};
-            parfor i = 1:size(pos0i,1) % parfor
-                
-                iPos0 = pos0i(i,:);
-                
-                % Row with the 0 pattern
-                rowi = ic == i;
-                iBCin = BCin(rowi,:);
-                
-                % Delete 0 column
-                iBCin = iBCin(:,~iPos0);
-                BCin2 = BCin(:,~iPos0);
-                
-                [Lia,Lcob] = ismember(BCin2,iBCin,'rows');                
-                
-                % Count overlap
-                Lcob = Lcob(Lia);
-                n = accumarray(Lcob,1,[size(iBCin,1),1]);
-                % Find more than 1 overlap (ttself is a match)
-                n = n > 1;
-                
-                rowi(rowi) = n;
-                
-                TF{1,i} = rowi;
+            % Tform from aligned 3D volumn to Allen reference 
+            % (i.e. 25 um resolution)
+            tform = reg2AllenTform.tform;
+            % Displacement field after tform
+            D = reg2AllenTform.D;
+            
+            % Scaling factor for brain seciton to volume
+            scaleTform = TBS.getScaleTform(scaleFactor,2);
+            scaleTform = affine2d(scaleTform);
+            
+            % Get section number via image name
+            secitonName = tbl.Properties.RowNames;
+            sectionNumber = TBS.getSectionNumber(secitonName,...
+                imageSetting,sysSetting);
+            
+            % x/yReg is in original image resolution (i.e. 0.55 um/pixel)
+            % Collapse to single column
+            x = tbl.xReg; y = tbl.yReg;
+            x = cellfun(@(X) median(X,2),x,'Uniformoutput',false);
+            y = cellfun(@(X) median(X,2),y,'Uniformoutput',false);
+            
+            % volume use section number as z
+            sz = cellfun(@(X) size(X,1),x);
+            z = arrayfun(@(X,Y) repmat(X,Y,1),sectionNumber,sz,'UniformOutput',false);
+            
+            xyz = [vertcat(x{:}),vertcat(y{:}),vertcat(z{:})];
+            
+            % Change xy to volume rosolution
+            xyz(:,1:2) = transformPointsForward(scaleTform,xyz(:,1:2));
+            
+            % Transform coordinates from volume to reference map ----------
+            xyz = transformPointsForward(tform,xyz);
+            
+            % Get displacement field from each coordinates use
+            % interpolation
+            xyz2 = [];
+            for i = 1:size(xyz,2)
+                xyz2(:,i) = interp3(D(:,:,:,i),xyz(:,1),xyz(:,2),...
+                    xyz(:,3),'spline');
             end
             
-            % Combine ovelrap from each pattern
-            TF = horzcat(TF{:});
-            TF = any(TF,2);            
+            % Transform using displacement field
+            xyz = xyz - xyz2;
+            
+            xyz = mat2cell(xyz,sz,3);
+            
+            % Reference xyz
+            tbl.xyzRef = xyz;
         end
-        
+              
         %% Function:    mergeAxonBC 
         % Discription:  merge codeBook BC using axon count
         function TF = mergeAxonBC(codeBook,axonBCn,mergeHamming)
@@ -7911,6 +8155,156 @@ classdef TBS % Terminal BARseq
             end
         end
         
+        %% Function:    exclBCinROI
+        % Discription:  excle barcodes within ROI
+        function BCtable = exclBCinROI(roi,BCtable,varName)
+            % Input & output:  roi, logical stack, region of interest
+            %           BCtable, table, with barcode coordinates
+            %           varName, str, variableName in BCtable to determine 
+            %           whether BC is within ROI
+            
+            xyz = BCtable.(varName);
+            
+            sz = cellfun(@(X) size(X,1),xyz);
+            
+            xyz = vertcat(xyz{:});
+            
+            xyz = round(xyz);
+            
+            % xyz within range
+            TF = TBS.isOutOfRngeDot(size(roi),xyz);
+            TF = ~TF;
+            
+            % xyz outside ROI, xyz to keep
+            ind = sub2ind(size(roi),xyz(TF,2),xyz(TF,1),xyz(TF,3));
+            TF(TF) = ~roi(ind);
+            
+            disp(['After exclude out of ROI: ', num2str(sum(TF)),...
+                ' of total ',num2str(numel(TF))]);
+            
+            % Exclude the rows in the table -------------------------------
+            TF = mat2cell(TF,sz);
+            for i = 1:size(BCtable,1)
+                BCtable{i,:} = cellfun(@(X) X(TF{i},:),BCtable{i,:},...
+                    'Uniformoutput',false);
+            end            
+        end
+        
+        %% Function:    BCinROI
+        % Discription:  find barcode with rolony inside ROI
+        function roiBC = BCinROI(roi,BCtable,varName)
+            % Input:    roi, logical stack, region of interest
+            %           BCtable, table, with barcode coordinates
+            %           varName, str, variableName in BCtable to determine
+            %           whether BC is within ROI
+            % Output:   roiBC, table, with barcode id for each image
+            
+            xyz = BCtable.(varName);
+            
+            sz = cellfun(@(X) size(X,1),xyz);
+            
+            xyz = vertcat(xyz{:});
+            
+            xyz = round(xyz);
+            
+            % xyz within range
+            TF = TBS.isOutOfRngeDot(size(roi),xyz);
+            TF = ~TF;
+            
+            % xyz inside ROI
+            ind = sub2ind(size(roi),xyz(TF,2),xyz(TF,1),xyz(TF,3));
+            TF(TF) = roi(ind);
+            
+            TF = mat2cell(TF,sz);
+            
+            id = cellfun(@(X,Y) X(Y),BCtable.codeID,TF,...
+                'UniformOutput',false);
+            
+            roiBC = cell2table(id,'VariableName',{'codeID'},...
+                'RowNames',BCtable.Properties.RowNames);
+        end
+        
+        %% Function:    exclSporadicBC
+        % Discription:  exclude sporadic BC in different regions
+        function axonBC = exclSporadicBC(axonBC,regVoxel,regionMinCount)
+            % Input & output:   axonBC, table
+            %               regVoxel, cell, one cell for one logical stack for a brain region
+            %               regionMinCount, vector, threshold for sporadic barcode for
+            %               each region
+            
+            xyz = axonBC.xyzRef;
+            id = axonBC.codeID;
+            sz = cellfun(@(X) size(X,1),id);
+            
+            xyz = vertcat(xyz{:});
+            id = vertcat(id{:});
+            
+            % index for the coordinate
+            xyz = round(xyz);
+            ind = sub2ind(size(regVoxel{1}),xyz(:,2),xyz(:,1),xyz(:,3));
+            
+            [~,~,ic] = unique(id);
+            
+            TF = [];
+            for i = 1:numel(regVoxel)
+                iReg = regVoxel{i};
+                
+                % whether coordinates are in the region
+                inReg = iReg(ind);
+                
+                % Count rolony within the region for each BC
+                n = accumarray(ic,inReg);
+                
+                % BC with less than min count in the region
+                n = n < regionMinCount(i);
+                I = find(n);
+                
+                % coordinates from BC to be exclude for the current region
+                iTF = inReg & ismember(id,I);
+                
+                TF(:,i) = iTF;
+            end
+            
+            TF = any(TF,2);
+            
+            disp(['After exclude sporadic BC: ', num2str(sum(~TF)),...
+                ' of total ',num2str(numel(TF))]);
+            
+            TF = mat2cell(TF,sz);
+            
+            % Delete rolony doesnt match the criteria ---------------------
+            for i = 1:size(axonBC,1)
+                axonBC{i,:} = cellfun(@(X) X(~TF{i},:),axonBC{i,:},...
+                    'UniformOutput',false);
+            end
+            
+        end
+        
+        %% Function:    exclFloatingUseROI
+        % Discription:  exclude floating rolony using BC identified by ROI,
+        % delete all rolony on the seciton
+        function BCtable = exclFloatingUseROI(BCtable,roiBC)
+            % Input & output: BCtable, table, with barcode coordinates
+            %           roiBC, table, with barcode id for each image
+            
+            TF2 = {};
+            for i = 1:size(roiBC,1)
+                imName = roiBC.Properties.RowNames{i};
+                
+                % rows doesnt belong to BC in ROI
+                TF = ~ismember(BCtable.codeID{imName},roiBC.codeID{imName});
+                
+                BCtable{imName,:} = cellfun(@(X) X(TF,:),...
+                    BCtable{imName,:},'UniformOutput',false);
+                
+                TF2{i,1} = TF;
+            end
+            
+            TF = vertcat(TF2{:});
+            disp(['After exclude flaoting rolony using ROI: ',...
+                num2str(sum(TF)),' of total ',num2str(numel(TF))]);
+        end
+        
         %% Function:    imBCid (for validation)
         % Discription:  get image of BC location and ID
         function im = imBCid(tbl,iSeq)
@@ -7943,520 +8337,2099 @@ classdef TBS % Terminal BARseq
         
     end
     
-    
-    
-    
-    
-    % =====================================================================
-    methods (Static)    % Intersection alignment ==========================
-        %% Function:    getInterTform
-        % Discription:  get max projection of seq01 for intersection
-        % alignment (may not need in the future)
-        function interTform = getMaxProj4InterAlign(isIterAlign,mouseID,directory,sysSetting,imageSetting)
-            % Output:   void, uint8 tif, on disk
+    methods (Static)    % Reference map ===================================
+        %% Function:    getRefMap
+        % Discription:  get reference map (nissl, avgTemplate, annotation)
+        function refMap = getRefMap(str,refSetting)
+            % Input:    str, string, name of the reference map
+            %           refSetting, struct, reference settings
+            % Output:   refMap, mat, image stack
             
-            delimiter = sysSetting.delimiter;
-            imFormat = sysSetting.imFormat;
+            directory = refSetting.directory;
             
-            maxProjDirectory = fullfile(directory.interAlign,'maxProj');
-            alignedMaxProjDirectory = fullfile(directory.interAlign,'alignedMaxProj');
-            
-            if ~exist(maxProjDirectory)
-                mkdir(maxProjDirectory);
+            switch str
+                case 'nissl'
+                    refName = refSetting.nisslName;
+                case 'avg'
+                    refName = refSetting.avgName;
+                case 'anno'
+                    refName = refSetting.annoName;
             end
             
-            if ~exist(alignedMaxProjDirectory)
-                mkdir(alignedMaxProjDirectory);
+            % Get imgage (need nrrdread under the driectory)
+            cd(directory)
+            refMap = nrrdread(refName);
+            
+            if strcmp('nissl',str)
+                % (don't know why cannot directly convert to uint8)
+                % Annomap cannot be change due to the ID
+                refMap = uint16(refMap);
+                refMap = im2uint8(refMap);
             end
             
-            interTform = {};
-            imSize = {};
-            rowNames = {};
-            
-            stitchFolders = dir(fullfile(directory.main,'*','*','stitched'));
-            stitchFolders = unique({stitchFolders.folder}');
-            
-            for iFolder = 1:size(stitchFolders,1) %parfor
-                cd(stitchFolders{iFolder})
-                files = ls(strcat('*',imFormat));
-                files = cellstr(files);
+            % Sagital to coronal plate
+            refMap = permute(refMap,[1 3 2]);            
+        end
                 
-                parfor jFile = 1:size(files,1) %parfpr
-                    fileName = files{jFile};
-                    
-                    % Max projection
-                    stack = TBS.getStack(fileName,1:imageSetting.chNum);
-                    stack = max(stack,[],3);
-                    stack = uint8(stack);
-                    stack = stack.*2.55;
-                    
-                    % Get slide number and location
-                    sectionNum = TBS.getSectionNumber(fileName,mouseID,sysSetting);
-                    location = strsplit(fileName,{delimiter,'.'});
-                    location = location{end-1};
-                    
-                    if isIterAlign == 0  % Save max proj ==================
-                        saveFileName = strjoin({num2str(sectionNum),location},delimiter);
-                        saveFileName = strcat(saveFileName,imFormat);
-                        imwrite(stack,fullfile(maxProjDirectory,saveFileName));
-                        
-                    elseif isIterAlign == 1  % InterAlign =================
-                        alignedFileName = strcat(location,delimiter,'*',delimiter,num2str(sectionNum),imFormat);
-                        alignedFileName = ls(fullfile(alignedMaxProjDirectory,alignedFileName));
-                        
-                        if isempty(alignedFileName) == 1
-                            continue
-                        end
-                        
-                        % Get aligned image
-                        fixed = imread(fullfile(alignedMaxProjDirectory,alignedFileName));
-                        
-                        % downscale for speed
-                        scale = 0.4;
-                        tform = [];
-                        while scale <= 1
-                            stack4Align = imresize(stack,scale);
-                            fixed4Align = imresize(fixed,scale);
-                            
-                            % Alignment, and rescale tform
-                            tform = imregcorr(stack4Align,fixed4Align,'Window',false);
-                            tform = tform.T;
-                            scaleTform = [scale 0 0; 0 scale 0; 0 0 1];
-                            tform = scaleTform*tform*inv(scaleTform);
-                            
-                            if tform(1,1) <= 0 || tform(2,2)<= 0
-                                scale = scale + 0.2;
-                                tform = [];
-                                continue
-                            else
-                                break
-                            end
-                        end
-                        
-                        interTform{iFolder,jFile} = tform;
-                        imSize{iFolder,jFile} = size(fixed);
-                        rowNames{iFolder,jFile} = fileName;
-                        disp(fileName);
-                    end
+        %% Function:    findAnnoLevel
+        % Discription:  find annotation structure with the selective level
+        function list = findAnnoLevel(annoStruct,level)
+            % Input:    annoStruct, sturct, of annotation
+            %           level, num, level of the region
+            %           currently (only support one)
+            % Output:   list, struct, of areas with the level
+            
+            list = [];
+            while 1 > 0
+                annoStruct = vertcat(annoStruct.children);
+                if isempty(annoStruct)
+                    break
+                end
+                
+                iLevel = [annoStruct.st_level];
+                
+                TF = iLevel == level;
+                list{end+1,1} = annoStruct(TF,:);
+            end
+            
+            list = vertcat(list{:});
+        end
+        
+        %% Function:    getAnnoRegion
+        % Discription:  getAnnotation regions
+        function refMap = getAnnoRegion(refSetting)
+            % Input:    refSetting, sturcture, reference settings
+            % Output:   refMap, mat, reference map stack
+            
+            annoStruct = refSetting.annoStruct;
+            
+            % Get level 11 id & their parents id
+            list = TBS.findAnnoLevel(annoStruct,11);
+            list = [[list.parent_structure_id];[list.id]];
+            list = list';
+            
+            refMap = TBS.getRefMap('anno',refSetting);
+            
+            % Combined the regions
+            [Lia,Locb] = ismember(refMap,list(:,2));
+            refMap(Lia) = list(Locb(Lia),1);
+        end
+        
+        %% Function:    annoRegionOutline
+        % Discription:  get outline of annotated regions
+        function regionOutline = annoRegionOutline(annoRegion)
+            % Input:    annoRegion, mat, 2d/3d works, value indicating
+            % regions
+            % Output:   regionOutline, logical, outline of the regions
+            
+            % Draw outline using single pixel
+            if ndims(annoRegion) ~= 3
+                SE = strel('disk',1);
+            else
+                SE = strel('sphere',1);
+            end
+            
+            regionOutline = imdilate(annoRegion,SE)~= annoRegion |...
+                imerode(annoRegion,SE)~= annoRegion;
+        end
+        
+        %% Function:    getBrainOutline
+        % Discirption:  get brain outline uses annotation map
+        % (for 3d-rotating brain)
+        function outline = getBrainOutline(annoMap,filterSz)
+            % Input:    annoMap, mat, annotation map
+            %           filterSz, num, filter size for avaerge filter
+            % Output:   outline, mat, brain outline
+            
+            % Get outline of the brain
+            outline = annoMap > 0;
+            outline = imdilate(outline,ones(3)) & outline == 0;
+            outline = uint8(outline).*255;
+            
+            % 3D-average filter
+            h = fspecial3('average',filterSz);
+            outline = imfilter(outline,h,'replicate');
+        end
+
+        %% Function:    findAnnoID
+        % Discription:  find all ID for the brain region
+        function id = findAnnoID(annoStruct,str)
+            % Input:    annoStruct, sturct, of annotation
+            %           str, char, region name
+            %           currently (only support one)
+            % Output:   id, vector, all id belongs to the region
+                   
+            % Find the struct (including children) of the region
+            TF = 0;
+            while ~any(TF)
+                annoStruct = vertcat(annoStruct.children);
+                iName = {annoStruct.name};
+                TF = contains(iName,str);
+            end
+            
+            annoStruct = annoStruct(TF);
+            
+            % Get all the id of it and its children
+            id = annoStruct.id;
+            TF = 1;
+            while TF
+                annoStruct = vertcat(annoStruct.children);
+                if isempty(annoStruct)
+                    break
+                end
+                id = [id; [annoStruct.id]'];
+            end
+        end
+                       
+        %% Function:    getAnnoRegionFlat ????????????????????????? used?
+        % Discription:  get annotated region in flat map
+        function annoRegionFlat = getAnnoRegionFlat(refSetting,ctxML,...
+                ctxAP,ctxDepthPrctile)
+            % Note: it need to fill some empty pixels before project into
+            % flatmap; to ensure the edge is clear
+            % Input:    refSetting, struct
+            % Output:   annoRegionFlat, mat, 2d, flatten annotation map 
+            
+            disp('Function getAnnoRegionFlat on progress...')
+            
+            refScale = refSetting.refScale;
+            
+            % Get annoMap with combined layers (level 11)
+            annoRegionFlat = TBS.getAnnoRegion(refSetting);
+            
+            % Change coordinates before find outline, cleaner
+            % Flatten the annomap to 3D ML/AP/Depth stack
+            [Y,X,Z,V] = TBS.find3(annoRegionFlat);
+            ind = sub2ind(size(annoRegionFlat),Y,X,Z);
+            annoRegionFlat = TBS.stack2flatmapIm(ind,V,ctxML,ctxAP,...
+                ctxDepthPrctile,@mode,refScale);
+            
+            % Filled the empty pixel per stack along depth
+            SE = strel('disk',3);
+            annoRegionFlat = imclose(annoRegionFlat,SE);
+            
+            % Max project the depth
+            annoRegionFlat = mode(annoRegionFlat,3);
+            
+            % Mode filter on max projection
+            annoRegionFlat = modefilt(annoRegionFlat,[7 7]);            
+        end
+                
+        %% Function:    isLeftIm
+        % Discription:  is left of imge (for left/right hemispher)
+        function TF = isLeftIm(im)
+            % Input:    im, mat, image stack
+            % Output:   TF, logical stack
+            
+            TF = false(size(im));
+            TF(:,1:round(size(im,2)/2),:) = true;
+        end
+        
+        %% Function:    regVoxelTF
+        % Discription:  whether the coordinates are within the region
+        function TF = regVoxelTF(xyz,regionVoxel)
+            % Input:    xyz, mat, coordinates
+            %           regionVoxel, logical stack, region areas
+            % Output:   TF, logical, whether the coordinates are within the region
+                                   
+            xyz = round(xyz);
+            ind = sub2ind(size(regionVoxel),xyz(:,2),xyz(:,1),xyz(:,3));
+            TF = regionVoxel(ind);            
+        end
+                       
+    end
+    
+    methods (Static)    % Align to Allen map ==============================
+        %% Function:    vol2micronTform
+        % Discription:  convert coordinates from 3d volume scale to micron
+        function tform = vol2micronTform(imageSetting,scaleFactor)
+            % Input:    imageSetting, struct,
+            %           scaleFactor, num, scale factor for 3d volume
+            % Output:   tform, affine3d object
+            
+            resolution = imageSetting.resolution;
+            slideThickness = imageSetting.slideThickness;
+            
+            resolution = scaleFactor/resolution;
+            
+            S = eye(4);
+            S(1,1) = 1/resolution;
+            S(2,2) = 1/resolution;
+            S(3,3) = S(3,3).*slideThickness;
+            
+            % Translation1: - 1
+            T1 = eye(4);
+            T1(4,1:3) = -1;
+            
+            % Translation2: + 1
+            T2 = eye(4);
+            T2(4,1:3) = 1;
+                       
+            tform = T1*S*T2;
+            
+            tform = affine3d(tform);
+        end
+        
+        %% Function:    sortHipDot
+        % Discription:  sort dots along a sequence, front-anterior end
+        function sortedDot = sortHipDot(dotXYZ)
+            % Input:    dotXYZ, mat, N*3
+            % Output:   sortedDot,cell, with mat of sorted dots
+            %               2x2, upper & bottom half of L/R side
+            
+            maxZ = max(dotXYZ(:,3));
+            
+            % Get the upper/lower half
+            centerYRow = dotXYZ(:,3) == maxZ;
+            centerY = mean(dotXYZ(centerYRow,2));
+            
+            sortedDot = {};
+            for jHalf = 1:2
+                if jHalf == 1
+                    row = dotXYZ(:,2) <= centerY;
+                    iDir = 'ascend';
+                else
+                    row = dotXYZ(:,2) >= centerY;
+                    iDir = 'descend';
+                end
+                
+                jDot = dotXYZ(row,:);
+                jDot = sortrows(jDot,3,iDir);
+                sortedDot{jHalf,1} = jDot;
+            end
+            
+            % Delete the repeated copy of middle
+            if sum(centerYRow) == 1
+                iDist = [sortedDot{1}(end-1,:);sortedDot{2}(2,:)];
+                iDist = pdist2(sortedDot{1}(end,:),iDist);
+                if iDist(1) > iDist(2)
+                    sortedDot{1}(end,:) = [];
+                else
+                    sortedDot{2}(1,:) = [];
                 end
             end
             
-            if isIterAlign == 1
-                interTform = reshape(interTform,[],1);
-                imSize = reshape(imSize,[],1);
-                rowNames = reshape(rowNames,[],1);
-                
-                delRow = cellfun(@isempty,interTform);
-                interTform = interTform(~delRow);
-                imSize = imSize(~delRow);
-                rowNames = rowNames(~delRow);
-                
-                interTform = table(interTform,imSize,'VariableNames',...
-                    {'tform','imSize'},'RowNames',rowNames);
+        end
+        
+        %% Function:    getDistPrctile
+        % Discription: get the prctile location of the dots in the
+        % whole length
+        function distPrctile = getDistPrctile(xyz)
+            % Input:    xyz, mat, coordinates, sorted
+            % Output:   distPrctile, vector
+            
+            iDist = diff(xyz,1,1);
+            iDist = sqrt(sum(iDist.^2,2));
+            iDist = cumsum(iDist);
+            distPrctile = iDist./iDist(end);
+            % Add the first dot
+            distPrctile = [0; distPrctile];
+        end
+        
+        %% Function:    interp1Dot
+        % Discription:  get dots along the line using interp1
+        function xyzQ = interp1Dot(xyz,prctileQ,maxPrctileDiff)
+            % Input:    xyzIn, mat, coordinates of dots
+            %           prctileQ, query prectile
+            %           maxPrctileDiff, max prctile different from raw data
+            % Output:   xyzQ, mat, query coordinates
+            
+            distPrctile = TBS.getDistPrctile(xyz);
+            
+            % Pick the 1st one if there is a duplication
+            [distPrctile,ia,~] = unique(distPrctile);
+            xyz = xyz(ia,:);
+                        
+            % Exclude reference precentage too far from the real data
+            if ~isempty(maxPrctileDiff)
+                prctileQ = reshape(prctileQ,[],1);
+                [D, ~] = pdist2(distPrctile,prctileQ,'euclidean',...
+                    'Smallest',1);
+                row = D <= maxPrctileDiff;
+                prctileQ = prctileQ(row,:);
+            end
+            
+            % Inpterp though all axes
+            for a = 1:size(xyz,2)
+                xyzQ(:,a) = interp1(distPrctile,xyz(:,a),prctileQ,'spline');
             end
         end
         
-        %% Function:    getInterTransformDotTable
-        % Discription:  get the xy of dot bscall result
-        function xy = getInterTransformDotTable(interTform,bscallCell,validDotID)
+         %% Function:    totalDist
+        % Discription:  total distance of the coordinates
+        function dist = totalDist(xyz)
+            % Input:    xyz, mat
+            % Ouput:    dist, num
+            dist = sum(sqrt(sum(diff(xyz).^2,2)),'all');
+        end
+                              
+        %% Function:    findYZangle
+        % Discription:  find z & y rotation angle using hipDot
+        function [yAngle,zAngle] = findYZangle(dotCell,yAngleInput,zAngleInput)
+            % Input:    dotCell, cell, 1x2, dot coordinates per side
+            %           yAngleInput/zAngleInput, row vector, angles for rotation
+            % Output:   yAngle/zAngle, num, degree of rotation along y/z-axis
             
-            if isa(interTform,'affine2d') == 0 && ...
-                    isa(interTform,'projective2d') == 0
-                interTform = projective2d(interTform);
+            % (Speed up by not using loop)
+            % x-axis, yAngle; y-axis: zAngle
+            % Get tform
+            [gridY,gridZ] = meshgrid(yAngleInput,zAngleInput);
+            tform = arrayfun(@(Y,Z) TBS.roty(Y)*TBS.rotz(Z),gridY,gridZ,'Uniformoutput',false);
+            
+            % Transform dots from each side
+            dotLR = {};
+            dotLR(:,:,1) = cellfun(@(X) dotCell{1}*X,tform,'Uniformoutput',false);
+            dotLR(:,:,2)= cellfun(@(X) dotCell{2}*X,tform,'Uniformoutput',false);
+            
+            % Only include Y & Z, convert to single to speed up
+            dotLR = cellfun(@(X) X(:,2:3),dotLR,'Uniformoutput',false);
+            dotLR = cellfun(@single,dotLR,'Uniformoutput',false);
+            
+            % Calculate the scale ratio according to distance between both side -------
+            % ie, longer side with <1 scale ratio
+            scaleRatio = cellfun(@(X) TBS.totalDist(X),dotLR);
+            scaleRatio = scaleRatio./max(scaleRatio,[],3);
+            % Flip both side
+            scaleRatio = cat(3,scaleRatio(:,:,2),scaleRatio(:,:,1));
+            
+            % Resample same number of dots in both side -------------------------------
+            % Use the side with less does for reference percentile
+            % scaleRatio == 1: full scale
+            [~,I] = sort(scaleRatio,3,'descend');
+            refPrctile = dotLR(I);
+            refPrctile = refPrctile(:,:,1);
+            refPrctile = cellfun(@(X) TBS.getDistPrctile(X),refPrctile,'Uniformoutput',false);
+            
+            % Scale similar equal distance using scale ratio
+            refPrctile = cellfun(@(X,Y) X.*Y,repmat(refPrctile,1,1,2),...
+                num2cell(scaleRatio),'Uniformoutput',false);
+            
+            dotLR = cellfun(@(X,Y) TBS.interp1Dot(X,Y,[]),dotLR,refPrctile,...
+                'Uniformoutput',false);
+            
+            % Calculate cost
+            fh = @(X1,X2) sqrt(sum((X1-X2).^2,2));
+            cost = cellfun(@(X1,X2) fh(X1,X2),dotLR(:,:,1),dotLR(:,:,2),...
+                'Uniformoutput',false);
+            cost = cellfun(@std,cost);
+            
+            % Find localMin
+            localMin = imerode(cost,ones(3)) == cost;
+            localMin = localMin.*cost;
+            [row,col,v] = find(localMin);
+            
+            if numel(v) > 1
+                [~,I] = min(v);
+                row = row(I); col = col(I); v = v(I);
+                warning('Funciton findYZangle: more than one local minimum was founded.')
             end
             
-            % Get transformed xy for intersection alignment
-            xy = cellfun(@(X) transformPointsForward(interTform,[X.x,X.y]),...
-                bscallCell,'Uniformoutput',false);
+            yAngle = yAngleInput(col); zAngle = zAngleInput(row);
             
-            % Get xy of the bscalled dot (using dotID) from first N cycle
-            xySeq = {};
-            for iSeq = 1:numel(xy)
-                % Only include the valid dots
-                iDotID = validDotID(:,iSeq);
-                [~,validRow] = ismember(iDotID,bscallCell{iSeq}.dotID);
+            hold on; imagesc(yAngleInput,zAngleInput,cost);
+        end
+        
+        %% Function:    findYZangleHighResolution
+        % Discription:  find z & y rotation angle using hipDot
+        function [yAngle,zAngle] = findYZangleHighResolution(dotCell,resolution)
+            % This function is pretty fast, so just loop through high resolution
+            % Input:    dotCell, cell, 1x2, dot coordinates per side
+            %           resolution, num, resolution for degree
+            % Output:   yAngle/zAngle, num, degree of rotation along y/z-axis
+            
+            disp('Start finding Z & Y angles...'); tic;
+            
+            % Angle interval
+            aInterval = 3;
+            
+            % intial center degree
+            yAngle = 0; zAngle = 0;
+            
+            figure;
+            while aInterval >= resolution
+                disp(['Finding YZ-angle: Resolution ',num2str(aInterval)]);
+                yAngleInput = [-45:1:45].*aInterval+yAngle;
+                zAngleInput = [-45:1:45].*aInterval+zAngle;
                 
-                row = validRow > 0;
+                [yAngle,zAngle] = TBS.findYZangle(dotCell,yAngleInput,zAngleInput);
                 
-                iXY = cell(size(validRow,1),1);
-                iXY(row) = arrayfun(@(X) xy{iSeq}(X,:),validRow(row),...
-                    'Uniformoutput',false);
-                xySeq(:,iSeq) = iXY;
+                aInterval = aInterval/3;
             end
             
-            % Get the median of first Nth as the xy
-            xy = [];
-            for j = 1:size(xySeq,1)
-                iXY = xySeq(j,:);
-                iXY = reshape(iXY,1,1,[]);
-                iXY = cat(3,iXY{:});
+            title(['Cost of finding rotation angle',newline,'in y&z-Axis']);
+            xline(yAngle,'k:'); yline(zAngle,'k:');
+            xlabel('y-axis'); ylabel('z-axis');
+            daspect([1 1 1]);
+            set(gcf, 'Position',  [100, 100, 240, 240]);
+        end
+        
+        %% Function:    getAllenD
+        % Discription:  get displacement field to allen reference map
+        function allenD = getAllenD(zq,im,refMap,redoTF,transformationSetting,directory)
+            % Input:    zq, vector, slide number for registration
+            %           im, mat, stack of current brain, same size as ref
+            %           refMap, mat, stack of reference map
+            %           redoTF, logical, whether to redo
+            %           transformationSetting, struct, setting for
+            %           alignment
+            %           directory, struct
+            % Output:   allenD, table, with point pairs, displacement field
+            % for transformaiton; one slide per row
+            
+            % Load allenTform 
+            cd(directory.main);
+            if exist('allenD.mat')
+                load('allenD.mat');
+            else
+                allenD = table('Size',[0 5],'VariableTypes',...
+                    repmat({'cell'},1,5),'VariableNames',...
+                    {'mp','D','fixName','fp','size'});
+            end
+                 
+            sz = size(refMap,1:2);
+            
+            tic
+            for i = zq
+                movingName = i;
                 
-                xy(j,:) = median(iXY,3);
+                % fix & moving
+                fix = refMap(:,:,i);
+                fix = imadjust(fix);
+                moving = im(:,:,i);                
+               
+                % mp: moving point; fp: fixed point                
+                % Whether use exist mp & fp (moving/fixed points)
+                if ~redoTF && size(allenD,1)>i &&~isempty(allenD.mp{movingName})
+                    mp = allenD{movingName,'mp'}{:};
+                    fp = allenD{movingName,'fp'}{:};
+                else
+                    mp = []; fp = [];
+                end
+                
+                % cpselectModify(moving,fixed,mp,fp,transformationType,maxIteration)
+                [mp,fp,D] = TBS.cpselectIter(moving,fix,mp,fp,transformationSetting,20);
+                
+                % Update variables
+                allenD(movingName,:)= table({mp},{D},{[]},{fp},{sz});
+                
+                % return var to workspace
+                assignin('base','allenD',allenD);
+                
+                save(fullfile(directory.main,'allenD.mat'),'allenD');
+                
+                disp(['Done: ',num2str(movingName)]); close all; toc
             end
         end
         
-    end
-    
-      
-    methods (Static)    % Region outline ==================================
-        %% Function:    getTissueOutline
-        function tissueOutline = getTissueOutline(outlineFileName,directory)
-            tissueOutline = imread(fullfile(directory.interAlign,outlineFileName));
-            tissueOutline = tissueOutline ==0;
-        end
-        
-        %% Function:    getPiaLen
-        function piaLen = getPiaLen(piaXY)
-            % Calcualte the length of pia according to pia pixels
-            piaLen = 0;
-            for i = 2:size(piaXY,1)
-                iPiaLen = pdist2(piaXY(i-1,:),piaXY(i,:));
-                piaLen(i) = piaLen(i-1)+iPiaLen;
-            end
-        end
-        
-        %% Function:    getPia
-        % Get the xy coordinates of pia and the length
-        function [piaXY,piaLen] = getPia(tifDirectory)
-            % Input:    tifDirectory, str, directory of the tif
-            % Output:   piaXY, 2 column mat for xy location of pia
-            %           piaLen, vector, for the length from the 1st piaXY
+        %% Function:    interpDcell
+        % Discription:  interpolation displacement field in the cell, for
+        % each axis, wih inter/extrapolation
+        function D = interpDcell(Dcell,ax,sz)
+            % Input:    Dcell, cell, with displacement field, one row per
+            % slide
+            %           ax, number, axis number for the displacement field
+            %           sz, vector, size of the output displacement field
+            % Output:   D, mat, displacement field of the axis
             
-            pia = imread(tifDirectory)==0;
+            D = zeros(sz);
             
-            % Get xy of the pia pixel
-            piaXY = [];
-            for i = 1:size(pia,1)
-                iPia = find(pia(i,:));
-                if isempty(iPia) == 1
+            % Get displacement field from the table
+            Z = [];
+            for i = 1:size(Dcell,1)
+                iD = Dcell{i};
+                
+                if isempty(iD)
                     continue
                 end
-                piaXY = [piaXY;[median(iPia),i]];
+                
+                D(:,:,i) = iD(:,:,ax);
+                
+                % Slide with dispalcement field
+                Z(end+1) = i;
             end
             
-            % Calcualte the length of pia according to pia pixels
-            piaLen = TBS.getPiaLen(piaXY);
-        end
-        
-        %% Function:    getAxAlongPia
-        % Discription: get distance/along pia
-        function [dist2Pia,piaLocation] = getAxAlongPia(piaXY,piaLen,dotXYZ)
-            [dist2Pia,piaLocation] = pdist2(piaXY,dotXYZ(:,1:2),'euclidean','Smallest',1);
-            piaLocation = piaLen(piaLocation);
-        end
-        
-        %% Function:    changeAxContra
-        function [excludeRow,dotXYZ] = changeAxContra(dotXYZ,nbin)
-            % Get the dots along x resemble pia =======================================
-            pia = [];
-            % Split y and z into groups, get min x for each subgroup
-            [~,~,zbin] = histcounts(dotXYZ(:,3),nbin);
-            for i = 1:max(zbin)
-                iDotInROI = dotXYZ(zbin == i,:);
-                
-                [~,~,ybin] = histcounts(iDotInROI(:,2),nbin);
-                for j = 1:max(ybin)
-                    jDotInROI = ybin == j;
-                    if sum(jDotInROI) < 20
-                        continue
-                    end
+            
+            % Interpolation of dispalcement field between first and last --
+            Z2 = Z(1):Z(end);
+            
+            % Interpolate 1-D for every pixel
+            % (speed is ok)
+            for i = 1:sz(1)
+                for j = 1:sz(2)
                     
-                    jDotInROI = iDotInROI(jDotInROI,:);
-                    [~,I] = min(jDotInROI(:,1));
-                    pia = [pia; jDotInROI(I,:)];
+                    % Stack with displacement field
+                    iD = D(i,j,Z);
+                    iD = reshape(iD,size(Z));
+                    D(i,j,Z2)= interp1(Z,iD,Z2,'spline');
                 end
             end
             
-            % Fit the outter dots to a surface, get dots in ROI =======================
-            sf = fit(pia(:,2:3),pia(:,1),'poly22');
-            
-            % Find the exclusion criterior by the position of majority of the t=dots
-            fh = @(X) feval(sf,X(:,2:3));
-            medDot =median(dotXYZ);
-            % Add a step outside of the sf
-            if fh(medDot) < medDot(1)
-                excludeRow = fh(dotXYZ)-50 > dotXYZ(:,1);
-            else
-                excludeRow = fh(dotXYZ)+50 < dotXYZ(:,1);
-            end
-            
-            % Get dist2Pia and piaLocation ============================================
-            % Get the range of piaXY along Y axis
-            minY = floor(min(dotXYZ(:,2)));
-            maxY = ceil(max(dotXYZ(:,2)));
-            nY = length(minY:maxY);
-            
-            % Loop through every z
-            for i = unique(dotXYZ(:,3))'
-                % Get piaXY of current z
-                x = feval(sf,[(minY:maxY)',repmat(i,nY,1)]);
-                piaXY = [x,(minY:maxY)'];
-                
-                % Calcualte the length of pia according to pia pixels
-                piaLen = TBS.getPiaLen(piaXY);
-                
-                iRow = dotXYZ(:,3) == i;
-                [dist2Pia,piaLocation] = TBS.getAxAlongPia(piaXY,piaLen,dotXYZ(iRow,:));
-                dotXYZ(iRow,1:2) = [piaLocation',dist2Pia'];
-            end
+            % Extrapolate the both end on z-axis --------------------------
+            % Same as the first and last displacement field
+            iD = D(:,:,Z(1));
+            D(:,:,1:Z(1))= repmat(iD,1,1,Z(1));
+            iD = D(:,:,Z(end));
+            D(:,:,Z(end):end)= repmat(iD,1,1,sz(3)-Z(end)+1);            
         end
         
     end
     
-    methods (Static)    % Stats ===========================================
-        %% Function:    getAdjustPvalue
-        % Discription:  % Adjusted p-value (Benjamini and Hochberg)
-        function adjustP = getAdjustPvalue(pval)
+    methods (Static)    % Construct flatmap ===============================
+        %% Function:    getCtxDepth
+        % Discription:  compute cortical depth
+        function ctxDepth = getCtxDepth(pia,depthStep,refScale,fuseSection)
+            % Input:    pia, logical stack, 
+            %           depthStep, number, depth per layer
+            %           refScale, scale for reference, pixel/micron
+            %           fuseSection, logical stack, seciton with no
+            %           internal gap
+            % Output:   ctxDepth, mat, with cortical depth value
             
-            [sortP,I] = sort(pval,'descend');
-            nPvalue = size(sortP,1);
+            disp('Function getCtxDepth on progress...');
             
-            if nPvalue == 0
+            ctxDepth = zeros(size(pia));
+            ctxDepth = single(ctxDepth);
+            
+            % Get layers of cortex depth using dilation
+            for i = depthStep:depthStep:1400
+                
+                % Dilation width in pixel
+                SE = i*refScale;
+                SE = round(SE);
+                SE = strel('sphere',SE);
+                
+                ictx = imdilate(pia,SE);
+                
+                % Delete area already exist
+                ictx(ctxDepth>0) = false;
+                % Bug fix 09292021: need to minus half step size to get
+                % cortical depth
+                ictx = ictx.*(i-depthStep/2);
+                
+                % Combine with current image
+                ctxDepth = max(ctxDepth,ictx);
+                
+                disp(['Dilation: ',num2str(i)]);
+            end
+            
+            % Add the deepest using seciton area, faster
+            % Also filled the section area, otherwise average filter will
+            % have issue in the bottom end
+            % Delete area already exist
+            ictx = fuseSection;
+            ictx(ctxDepth>0)=false;
+            
+            % Combine with current image
+            ictx = ictx.*(i+depthStep);
+            ctxDepth = max(ctxDepth,ictx);
+            
+            % Delete before the filter so the outside can be 0
+            ctxDepth(~fuseSection) = 0;      
+        end
+                
+        %% Function:    depthRefPoints
+        % Discription:  find reference points in upper/deeper layers
+        function [XYZ,ind] = depthRefPoints(refPlate,refDpethRng,...
+                ctxDepth,refScale,fuseCtx)
+            % Note, find 3-points along depth to define a cortical column
+            %       use determinant for linearity
+            % Input:    refPlate, mat, reference line
+            %           refDpethRng, vector, range of reference point depth
+            %           ctxDepth, mat, image of cortical depth, of fuse
+            %           brain
+            %           refScale, scale for reference, pixel/micron
+            %           fuseCtx, mat, cortex with no gap between
+            %           hepmisphere, for ML-axis computation
+            % Output:   XYZ, mat, one row/column; col, xyz; one stack per
+            % depth
+            %           ind, vector, index cooresponding reference voxel in
+            %           refPlate
+            
+            disp('Function depthRefPoints on progress...');
+            
+            % Pixel around min & max reference depth (~2-pixel width)
+            refDepthMin = ctxDepth < min(refDpethRng)+1/refScale &...
+                ctxDepth > min(refDpethRng)-1/refScale;
+            refDepthMin = refDepthMin & fuseCtx;
+            refDepthMax = ctxDepth > max(refDpethRng)-1/refScale &...
+                ctxDepth < max(refDpethRng)+1/refScale;
+            refDepthMax = refDepthMax & fuseCtx;
+            
+            % Coordinates of reference dots
+            [Y,X,Z,~] = TBS.find3(refPlate);
+            XYZ = [X,Y,Z];
+            ind = find(refPlate);
+            
+            [Y,X,Z,~] = TBS.find3(refDepthMin);
+            XYZmin = [X,Y,Z];
+            
+            [Y,X,Z,~] = TBS.find3(refDepthMax);
+            XYZmax = [X,Y,Z];
+            
+            % Find the min & max reference points for each mid-ref point --
+            [~,I] = pdist2(XYZmin,XYZ,'euclidean','Smallest',1);
+            XYZmin = XYZmin(I',:);
+            
+            [~,I] = pdist2(XYZmax,XYZ,'euclidean','Smallest',1);
+            XYZmax = XYZmax(I',:);
+            
+            % Check whether the 3-points are on a line using determinant --
+            TF = [];
+            for i = 1:size(XYZ,1)
+                ixyz = [XYZmin(i,:); XYZ(i,:); XYZmax(i,:)];
+                ixyz = ixyz';
+                
+                TF(i,1) = det(ixyz);
+            end
+            % Current determinant threshold: 0.001
+            % Bug fix 09292021, abs of det, determinat can be negaTive
+            TF = abs(TF) < 1;
+            
+            % Points belongs to the same cortical column, one row per
+            % column; in ascending order
+            XYZ = cat(3,XYZmin,XYZ,XYZmax);
+            XYZ = XYZ(TF,:,:);
+            ind = ind(TF);            
+        end
+        
+        %% Function:    interpDepthRefPoints
+        % Discription:  interpolate ML reference points get a reference line
+        function refPoint = interpDepthRefPoints(XYZ,ind,refDpethRng,refScale)
+            % Input:    XYZ, mat, one row/column; col, xyz; one stack per
+            % depth
+            %           ind, vector, index of cooresponding reference voxel
+            %           refDpethRng, vector, range of reference point depth
+            %           refScale, scale for reference, pixel/micron
+            % Output:   refPoint, cell, xyz corrdinates & index (index for
+            % reference voxel)
+            
+            % Range of cortical depth
+            Xq = -100:1500;
+            
+            % Interpolation the reference point into lines
+            refPoint = {};
+            for i = 1:size(XYZ,1)
+                ixyz = XYZ(i,:,:);
+                ixyz = squeeze(ixyz)';
+                
+                % Distance between dots along cortical depth
+                % 1st to 2nd point, 1st to 3rd point
+                D = [pdist2(ixyz(1,:),ixyz(2,:)),pdist2(ixyz(1,:),ixyz(3,:))];
+                D = D./refScale;
+                D = [0,D];
+                % Normalize to the median reference range
+                D = D-D(2)+ median(refDpethRng);
+                
+                % Delete the nonspecific points, not totally within the
+                % range
+                if D(1) < min(Xq) || D(end) > max(Xq)
+                    continue
+                end
+                
+                % Interpolate the line from reference points --------------
+                ixyz2 = [];
+                for j = 1:size(ixyz,2)
+                    ixyz2(:,j) = interp1(D,ixyz(:,j)',Xq,'spline');
+                end
+                % Get unique pixel
+                ixyz2 = round(ixyz2);
+                % Bug fix 09292021: need to have same sequence (stable)
+                ixyz2 = unique(ixyz2,'rows','stable');
+                
+                iInd = repmat(ind(i),size(ixyz2,1),1);
+                
+                refPoint{i,1} = [ixyz2,iInd];
+            end
+            
+            TF = cellfun(@isempty,refPoint);
+            refPoint = refPoint(~TF,:);
+        end
+        
+        %% Function:    exclNonspecificRefPoint
+        % Discription:  exclude nonspecific reference point
+        function refPoint = exclNonspecificRefPoint(refPoint,ctxDepth)
+            % Input:    refPoint, cell, reference points, one cell per
+            % reference line
+            %           ctxDepth, mat, image with cortical depth
+            
+            imSz = size(ctxDepth);
+            
+            sz = cellfun(@(X) size(X,1),refPoint);            
+            refPoint2 = vertcat(refPoint{:});
+            
+            % Exclude coordinates outside the image
+            TF = TBS.isOutOfRngeDot(imSz,refPoint2(:,1:3));
+            
+            % Get cortical depth for each reference point
+            idx = refPoint2(:,end);
+            depth = ctxDepth(idx);
+            
+            depth2 = zeros(size(TF));
+            depth2(~TF) = depth;
+            
+            depth2 = mat2cell(depth2,sz);
+            
+            % Exclude points outside cortex -------------------------------
+            refPoint = cellfun(@(X,Y) X(Y>0,:),refPoint,depth2,...
+                'UniformOutput',false);
+            depth2 = cellfun(@(X) X(X>0,:),depth2,'UniformOutput',false);
+            
+            % The depth need to be all-ascending sequence -----------------
+            TF = cellfun(@(X) diff(X)<0,depth2,'UniformOutput',false);
+            TF = cellfun(@any,TF);
+            
+            refPoint = refPoint(~TF);
+        end
+                
+        %% Function:    getMLrefLine
+        function refML = getMLrefLine(refML,midline,refScale)
+            % Input:    refML, logical, voxel for ML reference line
+            %           midline, logical voxel for midline
+            %           refScale, scale for reference, pixel/micron
+            % Output:   refML, mat, reference line with ML-value
+            
+            disp('Function getMLrefLine on progress...');
+            
+            % Step for each dilution (1 pixel at a time)
+            SE = strel('sphere',1);
+            
+            % Starting point: midline; use 1 but not 0
+            refML2 = refML & midline;
+            refML2 = single(refML2);
+            
+            checkTF = 0;
+            while max(refML2,[],'all') ~= checkTF
+                
+                checkTF = max(refML2,[],'all');
+                
+                % Find a pixel further
+                im = imdilate(refML2,SE);
+                I = im > 0;
+                % Add a pixel distance
+                im(I) = im(I) + (1/refScale);
+                
+                % Only include pxiel haven't counted
+                im(refML2 | ~refML)=0;
+                
+                % Combine with existent ML-value
+                refML2 = max(refML2,im);
+                
+                disp(['Got ML-reference line: ',num2str(max(refML2,[],'all'))]);
+            end
+            
+            refML = refML2;
+        end        
+        
+        %% Function:    fillRefCtx
+        % Discription:  fill the gap between ML-reference points, avg
+        % filter
+        function ctxML = fillRefCtx(refPoint,refLine,ctx)
+            % Input:    refPoint, mat, xyz & v (ML-value) for reference
+            % points
+            %           refML, mat, ML-reference line
+            %           ctx, mat, logical image of cortex
+            % Output:   ctxML, mat, image of ML value in cortex, bigger
+            % than cortex area (for filtering)
+            
+            disp('Function fillRefCtx on progress...');
+            
+            % Get image from the coordinates
+            ctxML = TBS.xyzv2im(size(ctx),refPoint(:,1:3),refPoint(:,4));
+            
+            % Also add the reference line
+            if ~isempty(refLine)
+                ctxML(refLine > 0)=0;                
+                ctxML = max(ctxML,refLine);
+            end
+            
+            TF = isnan(ctxML);
+            ctxML(TF) = 0;
+            
+            % Step per filling
+            SE = strel('sphere',3);
+            SE = SE.Neighborhood;
+            
+            checkTF = sum(~ctxML & ctx,'all');
+            while checkTF > 0
+                                
+                % Average of neigboring nonzero pixels
+                im = convn(ctxML,SE,'same');
+                n = convn(single(ctxML>0),SE,'same');
+                im = im./n;
+                
+                % Only include the empty area
+                im(ctxML>0 | ~ctx) = 0;
+                
+                ctxML = max(ctxML,im);
+                
+                if checkTF == sum(~ctxML & ctx,'all')
+                    return
+                end
+                
+                checkTF = sum(~ctxML & ctx,'all');
+                
+                disp(['Filled pixel: ',num2str(sum(ctxML >1,'all'))]);
+            end
+        end
+        
+        %% Function:    getAPrefPlate
+        % Discription:  get reference plate for AP-axis
+        function refAP = getAPrefPlate(refPlate,midline,refScale)
+            % Input:    refPlate, logical, plate in reference depth
+            %           midline, logical, use midline to count reference
+            %           AP-value
+            %           refScale, scale for reference, pixel/micron
+            % Output:   refAP, stack, reference plate for AP-axis
+            
+            % Use midline as reference line
+            TF = refPlate & midline;
+            [Y,X,Z,~] = TBS.find3(TF);
+            
+            % Find the median pixel for every stack
+            [Z,~,ic] = unique(Z);
+            X = accumarray(ic,X,[],@median);
+            Y = accumarray(ic,Y,[],@median);
+            XYZ = [X Y Z];
+            
+            % Sort from anterior to posterior
+            XYZ = sortrows(XYZ,3);
+            
+            % Calculate disatance of neigboring dots along AP
+            D = sqrt(sum(diff(XYZ,1).^2,2));
+            D = [0;D];
+            
+            % AP-value
+            D = cumsum(D);
+            
+            % Change to micron
+            D = D./refScale;
+            
+            % Set initial point to 1
+            D = D + 1;
+            
+            % Get refAP line ----------------------------------------------
+            refAP = TBS.xyzv2im(size(refPlate),XYZ,D);
+            
+            % Step size
+            SE = strel('sphere',1);
+            SE = SE.Neighborhood;
+            
+            fh = @(X) sum(X > 0,'all');
+            
+            checkTF = 0;
+            while fh(refAP) ~= checkTF
+                
+                checkTF = fh(refAP);
+                
+                % Fill neigboring pixel using average
+                im = convn(refAP,SE,'same');
+                n =  convn(single(refAP > 0),SE,'same');
+                im = im./n;
+                
+                % Only include pxiel haven't counted
+                im(refAP | ~refPlate)=0;
+                
+                % Combine with existent ML-value
+                refAP = max(refAP,im);
+                
+                disp(['Got AP-reference line: ',num2str(fh(refAP))]);
+            end
+        end            
+        
+    end
+    
+    methods (Static)    % Data processing using flatmap ===================
+        %% Function:    stack2flatmapIm
+        % Description:  convert the image stack to flatmap-stack
+        function flatStack = stack2flatmapIm(ind,V,ctxML,ctxAP,...
+                ctxDepthPrctile,method,refScale)
+            % Input:    ind, vector, index of inquery points
+            %           V, vector, value of inquery points
+            %           ctxML, stack, lookup table with ML-value for each voxel
+            %           ctxAP, stack, lookup table with AP-value for each voxel
+            %           ctxDepthPrctile, stack, lookup table with depth prectile for
+            %           each voxel
+            %           method, str, method to combine voxels
+            %           refScale, num, scale for reference map, pixel per micron
+            % Output:   flatStack, mat, faltmap stack using ML/AP/Depth coordinates
+            %           same scale as reference map
+            
+            sz = size(ctxML);
+            
+            % Change ML to flatmap x-coordinates on image (>0)
+            % Find left hemiphere, change to minus
+            TF = round(sz(2)/2):sz(2);
+            ctxML(:,TF,:) = ctxML(:,TF,:).*(-1);
+            ctxML = ctxML - min(ctxML,[],'all')+1;
+            
+             % Change to same scale as reference map
+            ctxML = ctxML.*refScale;
+            ctxAP = ctxAP.*refScale;
+            
+            % Transfer depth precetile to length, assume depth is 1000 um
+            ctxDepthPrctile = ctxDepthPrctile./100.*1000.*refScale;         
+                        
+            sz = [max(ctxAP,[],'all'),max(ctxML,[],'all'),max(ctxDepthPrctile,[],'all')];
+            sz = round(sz);
+            
+            % Get ML,AP,Depth prectile value
+            ML = ctxML(ind);
+            AP = ctxAP(ind);
+            depth = ctxDepthPrctile(ind);
+            
+            % Get voxel for the flatmap
+            xyz = [ML,AP,depth];
+            xyz = round(xyz);
+            [xyz,~,ic] = unique(xyz,'rows');
+            % voxel intensity compute using the method
+            v = accumarray(ic,V,[],method);            
+            
+            flatStack = TBS.xyzv2im(sz,xyz,v);            
+        end
+        
+        %% Function:    roiAPLim
+        % Discription:  get AP limit for current image (roi)
+        function roiAP = roiAPLim(roi,ctxAP,refScale)
+            % Input:    roi, mat, pixel area marks the region of interest
+            %           ctxAP, mat, reference AP-value
+            %           refScale, num, pixel per micron
+            % Output:   roiAP, vector, AP limit in roi (current image)
+            
+            % Fidn stack area
+            TF = any(roi,1:2);
+            roi = ctxAP(:,:,TF);
+            
+            % Find the min and max AP-value in stack area
+            roiAP = nonzeros(roi);
+            roiAP = roiAP.*refScale;
+            roiAP = [floor(min(roiAP)),ceil(max(roiAP))];
+        end
+
+        %% Function:    getMLAPD
+        % Discription:  get ML/AP/depth coordinates
+        function mlapd = getMLAPD(xyz,ctxML,ctxAP,ctxDepthPrctile)
+            % Input:    xyz, mat, corrdinates in reference framework
+            %           ctxML/AP/DepthPrctile, mat, reference value of
+            %           corteical ML/AP/DepthPrecitle
+            % Output:   mlapd, mat, coordiantes in ML/AP/Depth
+                        
+            disp('Function getMLAPD on progress...')
+            
+            % For cell input
+            cellTF = iscell(xyz);            
+            if cellTF
+                sz = cellfun(@(X) size(X,1),xyz);
+                xyz = vertcat(xyz{:});
+            end
+            
+            mlapd = zeros(size(xyz));
+            
+            % Coordinates outside the cortex
+            xyz2 = round(xyz);
+            ind = sub2ind(size(ctxML),xyz2(:,2),xyz2(:,1),xyz2(:,3));
+            TF = ctxML(ind)~=0;
+            
+            if ~any(TF)
+                
+                if cellTF
+                    mlapd = mat2cell(mlapd,sz,3);
+                end
+                
                 return
             end
             
-            adjustP =  sortP(1);
-            for i = 2:nPvalue
-                if sortP(i) == sortP(i-1)
-                    adjustP(i,1) = adjustP(i-1,1);
-                else
-                    adjustP(i,1) = min(adjustP(i-1,1),sortP(i)*nPvalue/(nPvalue-i+1));
-                end
+            % For coordinates inside the cortex ---------------------------
+            xyz = xyz(TF,:);
+            
+            % Add padding regions for interp coordinates close to the edge
+            % Padding repeat value, otherwise error message 'Insufficient
+            % finite values to interpolate.'
+            ctxML = prepareCtxV(ctxML);
+            ctxAP = prepareCtxV(ctxAP);
+            ctxDepthPrctile = prepareCtxV(ctxDepthPrctile);
+            
+            % Change the right hemisphere to minus ML
+            leftIm = TBS.isLeftIm(ctxML);
+            ctxML(~leftIm) = ctxML(~leftIm).*(-1);
+            
+            ML = interp3(ctxML,xyz(:,1),xyz(:,2),xyz(:,3));
+            AP = interp3(ctxAP,xyz(:,1),xyz(:,2),xyz(:,3));
+            detphPrctile = interp3(ctxDepthPrctile,xyz(:,1),xyz(:,2),xyz(:,3));
+            
+            mlapd(TF,:) = [ML,AP,detphPrctile];
+            
+            % Change to cell output if applicable
+            if cellTF
+                mlapd = mat2cell(mlapd,sz,3);
             end
             
-            adjustP(I) = adjustP;
+            % Function: prepareCtxV ---------------------------------------
+            % Discription: Prepare image with cortex value, for
+            % interpolation (for edge effect)
+            function ctxV = prepareCtxV(ctxV)
+                SE = strel('sphere',2);
+                SE = SE.Neighborhood;
+                
+                TFv = ctxV == 0;
+                % nonzeroAvgFilter(im,h,exclude0)
+                ctxV2 = TBS.nonzeroAvgFilter(ctxV,SE,false);
+                ctxV(TFv) = ctxV2(TFv);
+            end
         end
+        
+        %% Function:    plotRegionRef
+        % Discription:  plot flatmap region boundary and soma area
+        function plotRegionRef(mlapdSoma,regionOutlineFlat)
+            % Input:    mlapdSoma, mat, soma ML/AP/Depth coordinates
+            %           regionOutlineFlat, region boundary ML/AP/Depth
+            %           coorindates
+            % Output:   h, object, handel for the plot
+            
+            TF = any(mlapdSoma,2);
+            mlapdSoma = mlapdSoma(TF,1:2);
+            
+            % Injection center and radius
+            injCenter = median(mlapdSoma,1);
+            D = pdist2(mlapdSoma,injCenter);
+            r = prctile(D',95);
+            
+            hold on;
+            % Plot region boundaries
+            scatter(regionOutlineFlat(:,1),regionOutlineFlat(:,2),1,...
+                'k','filled','MarkerFaceAlpha',0.25);
+            % Plot it as a disk
+            rectangle('Position',[injCenter-[r r], [r r].*2],...
+                'Curvature',[1 1],'FaceColor','k')
+            
+            g = gca; g.YDir = 'reverse';
+            daspect([1 1 1]); set(gcf,'Position',[100 100 600 300]);
+        end
+        
+        %% Function:    flatmapSetting
+        % Discription:  setting for scatter plot of cortical flatmap
+        function flatmapSetting(ylim)
+            % Input:    ylim, vector, min & max limit for flatmap y-axis
+            
+            xlabel('ML (\mum)'); ylabel('AP (\mum)');
+            
+            g = gca; g.YLim = [min(ylim),max(ylim)]; 
+            g.XTickLabel = []; g.YTickLabel = [];
+            
+            set(gcf,'Position',[100 100 900 200]);
+        end
+        
     end
     
-    methods (Static)    % funciton can be cancel?
-        %% Function:    cellFunTable
-        % Pass any non-table structure
-        function cellArray = cellFunTable(fh,cellArray,varsName)
-            % Input:        cellArray, cell array contains tables
-            %               fh, function handle
-            % Output:       value, various, value from applying the function twice
+    methods (Static)    % Cortical analysis ===============================
+        %% Function:    nearSomaExcl
+        %  Discription: exclude rolony within a range of injection center
+        function mlapdDot = nearSomaExcl(mlapdDot,mlapdSoma,p,isCtrl)
+            % Input:    mlapdDot, cell, ML/AP/Depth coordinates of rolony
+            %           mlapdSoma, mat, ML/AP/Depth coordinates of soma, for exclusion
+            %           p, num, min percentage for exclusion
+            %           isCtrl, logical, whether is a control including deleting
+            %           similar area in the other side
+            % Output:   mlapdDot, cell
             
-            if iscell(cellArray) == 0
-                error('Funciton cellFunTable: Input cellArray is not a cell array.')
+            % Injection center (median) and radius
+            TF = any(mlapdSoma,2);
+            xy = mlapdSoma(TF,1:2);
+            injCenter = median(xy,1);
+            r = pdist2(xy,injCenter);
+            r = prctile(r',p);
+            
+            % Delete dots closed to the injection site
+            fh = @(X,Y) pdist2(X(:,1:2),injCenter)>= r;
+            mlapdDot = cellfun(@(X) X(fh(X),:),mlapdDot,'UniformOutput',false);
+            
+            % LatC local-exclusion control
+            if isCtrl
+                fh = @(X,Y) pdist2(X(:,1:2),injCenter.*[-1 1])>= r;
+                mlapdDot = cellfun(@(X) X(fh(X),:),mlapdDot,'UniformOutput',false);
             end
             
-            isTableCell = cellfun(@istable,cellArray);
-            valueCell = cellfun(@(X) fh(X.(varsName)),cellArray(isTableCell),'UniformOutput',false);
-            cellArray(isTableCell) = valueCell;
+            % Delete 0
+            mlapdDot = cellfun(@(X) X(any(X,2),:),mlapdDot,'UniformOutput',false);
+        end
+                
+    end
+    
+    methods (Static) % Paper analysis =====================================
+        %% Function:    BCtable2cell
+        % Discription:  change BCtable to cell with one cell per bc
+        function BCcell = BCtable2cell(BCtable,varName)
+            % Input:    BCtable, table, 
+            %           varName, str, content of the variable into the cell
+            % Output:   BCcell, cell, info from one BC per cell
+            
+            var = BCtable.(varName);
+            id = BCtable.codeID;
+            
+            var = vertcat(var{:});
+            id = vertcat(id{:});
+            
+            nBC = max(id);
+            
+            BCcell = cell(nBC,1);
+            for i = 1:nBC
+                row = id == i;
+                BCcell{i} = var(row,:);
+            end
+            
+        end
+        
+        %% Function:    focalProjPct
+        % Discription:  max focal projection percentage
+        function p = focalProjPct(xy,dia)
+            % 12132021: include itself
+            % Input:    xy, mat, ML-AP coordinates
+            %           dia, num, diameter for focal projection
+            % Ouptut:   p, num, percentage
+            
+            D = squareform(pdist(xy));
+            D = D <= dia;
+            
+            % Convert to percentage
+            p = sum(D,1)./size(D,1);
+            p = p.*100;
+            
+            p = max(p);            
         end
         
     end
     
     
-    methods (Static)    % Get annotation info =============================
-        %% Function:    getAnnotTreeMat
-        % Discription:  get a flattened annotation matrix from sturcture
-        function treeMat = getAnnotTreeMat(annotStructure)
-            % Input:    annotStructure, stucture, of annotation trees
-            % Output:   treeMat, mat, flattern annotation trees with
-            % lineage info. One id per row; parent id number on the level
-            % column number is the level number (level of children)
+    methods (Static) % Thalamus analysis ==================================        
+        %% Function:    withinStrThalFiber
+        % Discription:  find whether rolony is within the str-thal fiber
+        function TF = withinStrThalFiber(xyz)
+            % Input:    X, mat, rolony coordinates xyzRef
+            % Output:   TF, logical
             
-            annoFeildName = fieldnames(annotStructure);
-            % Find column location in structure
-            findLocFh = @(X) find(strcmp(annoFeildName,X));
-            childLoc = findLocFh('children');
-            parentLoc = findLocFh('parent_structure_id');
-            idLoc = findLocFh('id');
+            TF = [];
+            if isempty(xyz)
+                return;
+            end
             
-            % Get partial tree: grandparent-parent-children ID ------------
-            treeMat =[];
+            roi = [330 360; 140 200; 270 300]';
+            TF = xyz >= roi(1,:) & xyz <= roi(2,:);
+            TF = all(TF,2);
+        end        
+        
+        %% Function:    roiGroupPTCT
+        % Discritpion:  grouping CTPT using fiber tract
+        function idx = roiGroupPTCT(roiDot)
+            % Note, group basing on fiber location, top-0, below-1
+            % Input:    roiDot, cell, one row per bc; each cell is the
+            % coordinates of dots within the roi
+            % Output:   idx, vector, CT-0, PT-1, no dots in roi-nan;
             
-            % Assemble parent-children for the 1st level
-            iLevel = struct2cell(annotStructure)';
-            iTree = iLevel(:,[parentLoc idLoc]);
-            treeMat(end+1:end+size(iTree,1),1:2) = cell2mat(iTree);
+            cellSize = cellfun(@(X) size(X,1),roiDot);
             
-            i = 1; % Level #
-            while i >0
-                % Number of children
-                nChildren = cellfun(@(X) size(X,1),iLevel(:,childLoc));
-                % Current parent
-                iParent = iLevel(:,parentLoc);
-                % Current ID
-                iID = iLevel(:,idLoc);
+            roiDot = vertcat(roiDot{:});
+            
+            % Find the closest 10 roi dots as neighbors
+            [~,I] = pdist2(roiDot,roiDot,'euclidean','Smallest',11);
+            I = I(2:end,:); I = I';
+            
+            % Initial grouping
+            idx = roiDot(:,2) > median(roiDot(:,2));
+            
+            % Grouping basing on same barcode and neigbors
+            previousIdx = idx;
+            for i = 1:100
+                % Assign the dots with the neighbor mode idx for each roi dot
+                neghborIdx = idx(I);
+                idx = mode(neghborIdx,2);
+                idx = mat2cell(idx,nonzeros(cellSize));
                 
-                % Get [id, parentID] for every children
-                iTree = arrayfun(@(X,Y,Z) repmat([X Y],Z,1),iParent,iID,nChildren,...
-                    'Uniformoutput',false);
-                iTree = vertcat(iTree{:});
-                iTree = cell2mat(iTree);
+                % Find the mode for each BC, assign to all roi dots
+                modeIdx = cellfun(@mode,idx,'Uniformoutput',false);
+                % repmat2cell(matIn,cellIn)
+                idx = TBS.repmat2cell(modeIdx,idx);
+                idx = vertcat(idx{:});
                 
-                % Flattern children into structure array
-                iLevel = iLevel(:,childLoc);
-                iLevel = vertcat(iLevel{:});
-                
-                % Stop if there is no more child
-                if isempty(iLevel) == 1
+                % Check convergence
+                if previousIdx == idx
                     break
+                else
+                    previousIdx = idx;
                 end
-                
-                iLevel = struct2cell(iLevel)';
-                
-                % Add children ID
-                iTree = [iTree,cell2mat(iLevel(:,idLoc))];
-                % Add the grandparent-parent-children to the matrix
-                treeMat(end+1:end+size(iTree,1),i:i+2) = iTree;
-                
-                i = i+1;
             end
             
-            % Complete ancestor info --------------------------------------
-            % Sort in case the parent rows is not before the children
-            treeMat = sortrows(treeMat,'descend');
-            % Find all the upperlevel id using the overlap id (grandparent & parent)
-            for i = fliplr(3:size(treeMat,2)-1)
-                % Get grandparent & grandparent id for the children
-                iCol = i-1:i;
-                iTree = treeMat(:,iCol);
+            idx = mat2cell(idx,nonzeros(cellSize));
+            idx = cellfun(@mode,idx);
+            
+            % Convert to the size of roi
+            idx2 = nan(size(cellSize));
+            idx2(cellSize > 0) = idx;
+            idx = idx2;
+        end
+        
+        %% Function:    extGroupPTCT
+        % Discription:  grouping of CT and PT using neigboring rolonies
+        function idxOut = extGroupPTCT(thalDot,idxIn)
+            % Note 02132022: tried to use while loop to find convergence, is the same
+            % Input:    thalDot, cell vector, coordinates per cell
+            % Output:   idx, vector, group id for each cell
+            
+            cellSize = cellfun(@(X) size(X,1),thalDot);
+            
+            % input idx for every rolony
+            idxIn = TBS.repmat2cell(idxIn,thalDot);
+            idxIn = vertcat(idxIn{:});
+            
+            % Assign rolony idx using nearest 10 neigbors
+            thalDot = vertcat(thalDot{:});
+            [~,I] = pdist2(thalDot,thalDot,'euclidean','Smallest',11);
+            I = I'; I = I(:,2:end);
+            
+            % Find the most frequent idx per rolony
+            idxOut = idxIn(I);
+            idxOut = mode(idxOut,2);
+            
+            % Find the most frequent idx per BC
+            idxOut = mat2cell(idxOut,cellSize);
+            idxOut = cellfun(@mode,idxOut);
+        end
+        
+        %% Function:    dispThalGroupStat
+        % Discription:  displate the grouping result of cell number
+        function dispThalGroupStat(matIn)
+            % Input:    matIn, logical, 2-3 groups
+            
+            for i = 1:size(matIn,2)
                 
-                % Get the rows with two overlap
-                [C,ic,ia] = unique(iTree,'row');
-                for j = 1:size(C,1)
-                    row = ia == j;
-                    if C(j,2) == 0 || sum(row) == 1
-                        continue
-                    end
-                    grandparent = treeMat(ic(j),i-2);
-                    treeMat(row,i-2) = grandparent;
+                n = matIn(:,i);
+                n = sum(n);
+                n = num2str(n);
+                
+                if i == 3
+                    disp(['Num of non-group cells: ', n]);
+                else
+                    disp(['Num of group ',num2str(i),' cells: ', n]);
                 end
             end
         end
+                
+        %% Function:    dispThalGroupCellNumStat
+        function dispThalGroupCellNumStat(groupRow,inStr,inMb)
+            
+            fh = @(X) num2str(X);
+            
+            inStr = cellfun(@any,inStr);
+            inMb = cellfun(@any,inMb);
+                                    
+            % Stats: porpotion per group
+            disp(['Total cells for grouping: ',fh(size(groupRow,1))]);
+            TBS.dispThalGroupStat(groupRow);
+            
+            % Stats: midbrain per group
+            mbPos = groupRow & inMb;
+            disp(['Total supCol-projecting BC: ', fh(sum(mbPos,'all'))]);
+            TBS.dispThalGroupStat(mbPos)
+            
+            % Stats: str per group
+            strPos = groupRow & inStr;
+            disp(['Total str-projecting BC: ', fh(sum(strPos,'all'))]);
+            TBS.dispThalGroupStat(strPos)            
+        end
         
-        %% Function:    getIDacronym
-        % Discription:  flattern id-acronym relationship
-        function IDacronym = getIDacronym(annotStructure)
-            % (Lineage relationship is not included)
-            % Input:    annotStructure, stucture, of annotation trees
-            % Output:   IDacronym, cell, with all annoation infomation
+        %% Function:    thalFigSetting
+        % Discription:  Setting for thalamic 3d figure
+        function thalFigSetting
+            alpha 0.2;
+            xlabel('x'); ylabel('y'); zlabel('z');
+            g = gca; g.YDir = 'reverse'; g.ZDir = 'reverse';
+            g.XLim = [200 450]; g.YLim = [50 250];
+            g.XTick = []; g.YTick = []; g.ZTick = [];
+            daspect([1 1 1]); set(gcf, 'Position',  [100, 100, 500, 300]);
+            grid off; view([-10 10]);
+        end
+        
+        %% Function:    visThalGroup
+        % Discription:  visualize the thalamic rolony of each group
+        function visThalGroup(xyzCell,idx,omitnan)
+            % Input:    cf, cell, rolony coordinates
+            %           idx, vector,
+            %           omitnan, logical, whether omit nan
             
-            annoFeildName = fieldnames(annotStructure);
-            % Find column location in structure
-            findLocFh = @(X) find(strcmp(annoFeildName,X));
-            childLoc = findLocFh('children');
+            xyz = vertcat(xyzCell{:});
+                        
+            idx2 = TBS.repmat2cell(idx,xyzCell);
+            idx2 = vertcat(idx2{:});
+            if omitnan == 0
+                idx2(isnan(idx2)) = 3;
+            end
             
-            IDacronym = annotStructure;
+            % Row shuffle
+            [xyz,I] = TBS.shuffleRows(xyz);
+            idx2 = idx2(I);
+            
+            figure; scatter3(xyz(:,1),xyz(:,2),xyz(:,3),2,idx2,'filled');
+            TBS.thalFigSetting;            
+        end
+       
+        %% Function:    groupCTPT (main)
+        % Discription:  group thal+ cells into CTPT
+        function idx2 = groupCTPT(xyzDot,thalReg,strReg,mbReg)
+            % NaN: cells with no projection to thalamus; 0: CT; 1: PT
+            % Input:    xyzDot, cell, xyz coordinates in reference
+            % framework
+            %           thalReg/strReg/mbReg, logical stack, thal/str/mb
+            %           area in registrated framework
+            % Output:   idx2, vector, group number
+            
+            disp('Grouping thalamus+ cells....')
+            
+            % Settings
+            
+            % Colormap: corn
+            % 1-CT; 2-PT; 3-NaN
+            cCorn = [1 0.8 0; 0.25 0.75 0.1; 0 0 0];
+                                               
+            % Get CF cells ================================================
+            % Dots within brain regions
+            % regVoxelTF(xyzDot,CFvoxel);
+            fh = @(Y) cellfun(@(X) TBS.regVoxelTF(X,Y),xyzDot,'UniformOutput',false);
+            inThal = fh(thalReg);
+            inStr = fh(strReg);
+            inMb = fh(mbReg);
+            
+            % COI: cell of interest: thal+
+            COI = cellfun(@any,inThal);      
+            
+            xyzCOI = xyzDot(COI);
+            inThal = inThal(COI);
+            inStr = inStr(COI);
+            inMb = inMb(COI);
+            
+            % Group CF cells within roi ===================================
+            % Dots within ROI
+            roiDot = cellfun(@(X) X(TBS.withinStrThalFiber(X),:),...
+                xyzCOI,'UniformOutput',false);
+            
+            % Split cells into groups using roi
+            % group basing on fiber location, top-0, below-1
+            idx = TBS.roiGroupPTCT(roiDot);
+            
+            % Stats -------------------------------------------------------
+            % Stats: cell number for each group (0, 1, NaN)
+            disp('Stats of grouping of all cells: ');
+            row = idx == [0 1];
+            row = [row,isnan(idx)];
+            
+            TBS.dispThalGroupCellNumStat(row,inStr,inMb)
+            
+            % SupFig 2. Plot the dots within roi --------------------------
+            % Black: all thal dots; red: portion within roi
+            
+            xyzCOI2 = vertcat(xyzCOI{:});
+            roiDot2 = vertcat(roiDot{:});
+            
+            figure; scatter3(xyzCOI2(:,1),xyzCOI2(:,2),xyzCOI2(:,3),2,'k','filled');
+            hold on; scatter3(roiDot2(:,1),roiDot2(:,2),roiDot2(:,3),...
+                2,'r','filled');
+            TBS.thalFigSetting;
+            
+            % SupFig2. Visualizing grouping result ------------------------
+            % visThalGroup(cf,idx,omitnan);
+            TBS.visThalGroup(xyzCOI,idx,0); colormap(cCorn);
+            
+            % Extent the grouping to the BC with no rolony in roi =========
+            
+            % Thalamic rolonies
+            thal = cellfun(@(X,Y) X(Y,:),xyzCOI,inThal,'UniformOutput',false);
+            
+            % expand idx to include cells with no rolony in roi
+            % extGroupPTCT(thalDot,idxIn)
+            idx2 = TBS.extGroupPTCT(thal,idx);
+            
+            % Report change group id
+            TF = ~isnan(idx);
+            disp(['ExtGroupPTCT has different grouping result: ',...
+                num2str(sum(idx(TF)~=idx2(TF))),'; in ',num2str(sum(TF))]);
+            
+            idx = idx2;
+            
+            % Stats -------------------------------------------------------                      
+            disp('Stats of grouping of all cells, after extension: ');
+            row = idx == [0 1];
+            row = [row,isnan(idx)];
+            
+            TBS.dispThalGroupCellNumStat(row,inStr,inMb)
+            
+            % Fig2. Visualizing grouping result ---------------------------
+            % visThalGroup(cf,idx,omitnan);
+            TBS.visThalGroup(xyzCOI,idx,0); colormap(cCorn(1:2,:));
+            
+            % Visualize individual group
+            idx2 = idx;
+            idx2(idx2 == 1) = nan;
+            TBS.visThalGroup(xyzCOI,idx2,1); colormap(cCorn(1,:));
+            
+            idx2 = idx;
+            idx2(idx2 == 0) = nan;
+            TBS.visThalGroup(xyzCOI,idx2,1); colormap(cCorn(2,:));
+            
+            % Convert CTPT grouping to all the BC -------------------------
+            idx2 = nan(size(xyzDot,1),1);
+            idx2(COI) = idx;
+        end
+        
+    end
+    
+    methods (Static) % Barcoded cell reconstruction ======================= 
+        %% Function:    pdistCluster
+        % Discription:  Find the shortest distance between cluster
+        function [D,I] = pdistCluster(dotXYZ,clusterID)
+            % Input:    dotXYZ, mat, dot coordinates in xyz
+            %           clusterID, cell, one cluster per cell
+            % Output:   D, mat, min distance between cluster
+            %           I, cell, pair of dots with min distance in each
+            %           cluster; 1st column, current cluster (row); 2nd
+            %           column, the index of other cluster
+            
+            D = []; I = {};
+            for i = 1:size(clusterID,1)
+                % Dot coordinates of the current cluster
+                iCluster = clusterID{i};
+                iCluster = dotXYZ(iCluster,:);
+                
+                % Shortest distance of dots in other cluster to every dot of the
+                % current cluster-iD, dot index in the partner cluster-Ip
+                [iD,Ip] = cellfun(@(X) pdist2(dotXYZ(X,:),iCluster,'euclidean',...
+                    'Smallest',1),clusterID,'Uniformoutput',false);
+                
+                % Minimum distance in each cluster
+                % and the cooresponding dot index of current cluster
+                [iD,Ic] = cellfun(@(X) min(X),iD,'Uniformoutput',false);
+                
+                % Dot index in the partner cluster with short distance
+                Ip = cellfun(@(X,Y) X(Y),Ip,Ic,'UniformOutput',false);
+                
+                iD = cell2mat(iD);
+                % Index pair: current (Ic)-partner (Ip)
+                Ic = cell2mat(Ic); Ip = cell2mat(Ip);
+                
+                % Find cluster with minimum distance
+                iD(i) = inf;     % Exclude itself
+                % iD: min distance; iI: idx in clusterID
+                [iD,iI] = min(iD);
+                
+                % Get the cooresponding cell using iI
+                Ic = Ic(iI); Ip = Ip(iI);
+                
+                % Convert to dot ID   
+                Ic = clusterID{i}(Ic); Ip = clusterID{iI}(Ip); 
+                
+                D(i) = iD; I{i} = [Ic,Ip];
+            end
+        end
+        
+        %% Function:    uniqueCluster
+        % Discription:  delete repeat cluster with identical ID
+        function clusterID = uniqueCluster(clusterID)
+            % Input/Output:    clusterID, cell, with ID for each cluster
+            
             i = 1;
-            while i > 0
-                % Flattern children into cell array
-                if i == 1
-                    iLevel = struct2cell(annotStructure)';
-                else
-                    iLevel = struct2cell(iLevel)';
+            % (The last one doesnt have similar below)
+            while i < size(clusterID,1)
+                iCluster = clusterID{i};
+                
+                % Find the other cluster complete match the current clusterID
+                repeatCluster = cellfun(@(X) all(ismember(X,iCluster)),clusterID);
+                repeatCluster = find(repeatCluster);
+                
+                % Delete all the other cluster
+                % Skip the itself-first one
+                repeatCluster = repeatCluster(2:end);
+                clusterID(repeatCluster) = [];
+                
+                i = i+1;
+            end
+        end
+        
+        %% Function:    fuseCluster
+        % Disceirption: fuse cluster with shared id
+        function clusterID = fuseCluster(clusterID)
+            % Input/Output:    clusterID, cell, with ID for each cluster
+            
+            i = 1;
+            while i < size(clusterID,1)
+                iCluster = clusterID{i};
+                
+                % Find cluster with shared id
+                partnerCluster = cellfun(@(X) any(ismember(X,iCluster)),clusterID);
+                partnerCluster = find(partnerCluster);
+                
+                % 1st is itself, move on to the next cluster
+                if numel(partnerCluster) == 1
+                    i = i + 1;
+                    continue
                 end
                 
-                % Flattern the children cell array
-                iLevel = iLevel(:,childLoc);
-                iLevel = vertcat(iLevel{:});
-                % Stop if there is no more child
-                if isempty(iLevel)
+                % If there is a partner, add it to current cluster
+                % (Add one per iteration)
+                partnerCluster = partnerCluster(2);
+                
+                % Add partner cluster to the current cluster
+                clusterID{i} = [clusterID{i},clusterID{partnerCluster}];
+                clusterID{i} = unique(clusterID{i});
+                
+                % Delete the origianl position of partner cluster
+                clusterID(partnerCluster) = [];
+            end
+        end
+        
+        %% Function:    getLinePair
+        % Discription:  get pairs of dots for rolony-line
+        function linePair = getLinePair(dotXYZ,distThreshold)
+            % Input:    dotXYZ, mat, dot coordinates
+            %           distThreshold, num, max length threshold
+            % Output:   linePair, cell
+            
+            tic;
+            
+            n = size(dotXYZ,1);
+            
+            % dot ID: row number
+            dotID = (1:n)';
+            
+            % Cluster: group of dots connected together
+            % Initiation: one cluster with one rolony
+            clusterID = num2cell(dotID);
+            
+            linePair = {};
+            while size(clusterID,1) > 1
+                % Shortest distance between cluster
+                % I, pair of dots belongs to a cluster
+                [D,I] = TBS.pdistCluster(dotXYZ,clusterID);
+                
+                % Whether the shortest distance pass threshold
+                row = D <= distThreshold;                
+                if ~any(row)
                     break
                 end
                 
-                % Add the children to the structure array
-                IDacronym = [IDacronym; iLevel];
-                i = i+1;
+                I = I(row);
+                
+                % Add the new pairs to clusterID
+                clusterID = [clusterID; I'];
+                
+                % Delete the initial single clusterID
+                row = cellfun(@(X) numel(X),clusterID) > 1;
+                clusterID = clusterID(row);
+                
+                % Delete repeat
+                clusterID = TBS.uniqueCluster(clusterID);
+                
+                % Line for drawing lines between dots
+                linePair = [linePair; clusterID];
+                % Only the new paris have two dots, fused one has more than
+                % 2, exclud fused clusters (dot number > 2)
+                row = cellfun(@(X) numel(X),linePair) == 2;
+                linePair = linePair(row,:);
+                
+                clusterID = TBS.fuseCluster(clusterID);
             end
             
-            % Sortting for better visualization
-            [~,I] = sortrows([IDacronym.graph_order]');
-            IDacronym = IDacronym(I,:);
+            disp('Done getLinePair'); toc;
+        end
+        
+        %% Function:    plotLineIm
+        % Discription:  plot line image in voxel
+        function im = plotLineIm(sz,dotXYZ)
+            % Input:    sz, vector, image size
+            %           dotXYZ, cell, dot coordinates for each line pair
+            % Output:   im, logical stack, with lines   
+            
+            xyz = {};            
+            for i = 1:numel(dotXYZ)
+                iDot = dotXYZ{i};
+                
+                diffDot = diff(iDot,1);
+                
+                % interp1 basing on the max length
+                len = ceil(max(abs(diffDot)));
+                
+                if len > 1
+                    iDot =  mat2cell(iDot,2,[1 1 1]);
+                    iDot = cellfun(@(X) interp1([1 len],X,1:len)',iDot,...
+                        'UniformOutput',false);
+                    iDot = horzcat(iDot{:});
+                end
+                
+               xyz{i,1} = iDot; 
+            end
+            
+            xyz = vertcat(xyz{:});
+            
+            xyz = round(xyz);
+            xyz = unique(xyz,'row');
+            
+            % Delete out of range dots (dots close to the edge due to scaling)
+            TF = TBS.isOutOfRngeDot(sz,xyz);
+            xyz = xyz(~TF,:);
+            
+            im = TBS.xyzv2im(sz,xyz,[]);
+        end
+        
+        %% Function:    getBCmodel
+        % Discription:  get voxel location for individual barcode
+        function bcVoxel = getBCmodel(somaXYZ,dotXYZ,distThreshold,sz,dilateR)
+            % Input:    somaXYZ, mat, soma locaiton coordinates in micron
+            %           dotXYZ, mat, rolony location coordinates in micron
+            %           distThreshold, num, max distance for rolony-line
+            %           sz, row vector, output image size
+            %           dilateR, num, dilation size for soma
+            % Output:   bcVoxel, mat, voxel location for output,
+                                    
+            % 10202021: do not include soma if no soma location
+            % Include soma during connecting dots
+            somaTF = any(somaXYZ);
+            
+            if somaTF
+                dotXYZ = [dotXYZ; somaXYZ];
+            end
+            
+            linePair = TBS.getLinePair(dotXYZ,distThreshold);
+                                   
+            dotXYZ2 = cellfun(@(X) dotXYZ(X,:),linePair,...
+                'UniformOutput',false);
+            
+            % Plot lines
+            im = TBS.plotLineIm(sz,dotXYZ2);
+            
+            % Plot somas
+            if somaTF
+                imSoma = TBS.xyzv2im(sz,somaXYZ,[]);
+                
+                % Make soma visiable
+                SE = strel('sphere',dilateR);
+                imSoma = imdilate(imSoma,SE);
+                
+                im = im | imSoma;
+            end
+            
+            % Compress image into sparse matrix
+            [y,x,z,~] = TBS.find3(im);
+            
+            % Coordinates for barcode voxel
+            bcVoxel = [x y z];            
+        end
+        
+        %% Function:    plotBCline
+        % Discription:  Plot barcode line in MATLAB
+        function plotBCline(somaXYZ,dotXYZ,distThreshold,scaleTform,cmap)
+            % Input:    somaXYZ, mat, soma locaiton coordinates in micron
+            %           dotXYZ, cell, dot location coordinates in micron
+            %           per cell
+            %           distThreshold, num, max distance for rolony-line
+            %           scaleTform, mat, scaling matrix for micron to
+            %           output, to speed up
+            %           sz, row vector, output image size
+            %           dilateR, num, dilation size for soma
+            % Output:   bcVoxel, cell, voxel location for output, one
+            % barcode per cell
+                        
+            dotXYZ = TBS.horzcatArea(dotXYZ);
+            
+            % Include soma during connecting dots
+            dotXYZ2 = mat2cell(somaXYZ,ones(size(somaXYZ,1),1),size(somaXYZ,2));
+            dotXYZ = cellfun(@(X,Y) [X;Y],dotXYZ,dotXYZ2,'Uniformoutput',false);
+            
+            linePair = cellfun(@(X) TBS.getLinePair(X,distThreshold),...
+                dotXYZ,'UniformOutput',false);
+            
+            % Scale down for visilization
+            if ~isempty(scaleTform)
+                somaXYZ = somaXYZ*scaleTform;
+                dotXYZ = cellfun(@(X) X*scaleTform,dotXYZ,'Uniformoutput',false);
+            end
+            
+            % One cell per bc, each cell contains voxel location
+            for j = 1:size(dotXYZ,1)
+                
+                % Get dot coordinates for every pair
+                jDotXYZ = dotXYZ{j};
+                jLine = linePair{j};
+                jc = cmap(j,:);
+                
+                for i = 1:size(jLine,1)
+                    iPair = jLine{i};
+                                        
+                    sz = 1;
+                    lineStyle = '-';
+                    
+                    line(jDotXYZ(iPair,1),jDotXYZ(iPair,2),...
+                        'Color',jc,'LineWidth',sz,'LineStyle',lineStyle);
+                end
+                                
+                % Plot soma
+                scatter(somaXYZ(j,1),somaXYZ(j,2),80,jc,...
+                    'filled','MarkerFaceAlpha',1);
+            end            
+        end        
+                
+        %% Function:    plotBCim
+        % Discription:  plot barcoded image
+        function [im, cmap] = plotBCim(sz,bcIm,c)
+            % Input:    sz, mat, image size
+            %           bcIm, cell, voxel coordinates for each BC
+            %           c, mat/mat, color
+            % Output:   im, uint8 image stack
+            
+            im = uint8(zeros(sz));            
+            cmap = [];            
+            for i = 1:numel(bcIm)
+                
+                ibc = bcIm{i};
+                if isempty(ibc)
+                    continue
+                end
+                
+                if ~isempty(c) && ~isempty(c{i}) && size(c{i},2) == 1
+                    ic = c{i};
+                else
+                    ic = max(im,[],'all')+1;
+                end
+                
+                % Get RGB colormap
+                if ~isempty(c) && ~isempty(c{i}) && size(c{i},2) == 3
+                    cmap(ic,:) = c{i};
+                end
+                
+                if ic > 255
+                    warning('Currently only support uint8 image')
+                    return
+                end
+                
+                im2 = TBS.xyzv2im(sz,ibc,ic);
+                im = max(im,im2);
+            end
+            
+        end
+        
+        %% Function:    colorBD
+        % Discription:  generate different brightness and darkness of the
+        % color
+        function c2 = colorBD(c,m)
+            % Input:    c, mat, RGB color
+            %           m, num, number of color
+            % Output:   c2, m variants of color c
+            
+            if m ==2
+                c2 = [-0.4 0];
+            elseif m == 3
+                c2 = [-0.4 -0.2 0];
+            elseif m == 4
+                c2 = [-0.4 -0.2 0 0.2];
+            else
+                % Different variants of color c
+                c2 = -0.4:0.8/(m-1):0.4;
+            end
+            
+            
+            c2 = c2'; c2 = repmat(c2,1,3);
+            c2 = c2 + c;
+            
+            % Max and min of RGB is 1 and 0
+            c2 = min(c2,1); c2 = max(c2,0);
+        end
+        
+        %% Function:    ind2rgb3
+        % Discription:  convert index 3D-image to RGB image
+        function imOut = ind2rbg3(im,cmap)
+            % Input:    im, mat, image stack
+            %           cmap, mat, colormap
+            % Output:   imOut, mat, image stack with channel appened to z
+            
+            classType = class(im);
+            classFh = @(X) cast(X,classType);
+            
+            % Channelintensity for RGB
+            cmap = cmap.* double(classFh(inf));
+            cmap = round(cmap);
+            cmap = classFh(cmap);
+            
+            for i = 1:3
+                icmap = cmap(:,i);
+                
+                % im+1 for the index
+                if i == 1
+                    imOut = icmap(im+1);
+                else
+                    imOut = cat(3,imOut,icmap(im+1));
+                end
+            end
+        end
+        
+        %% Function:    brainImOut
+        % Discription:  filter and correct the brain image for output
+        function bIm = brainImOut(bIm,sz,filtSize)
+            % Input & output:    bIm, mat, image stack
+            %           sz, row vector, output image size
+            %           filtSize, num, filter size
+            % Note, filter size may need to be changed for different size
+            
+            disp('Getting brainImOut...'); tic;
+            
+            % Background subtraction
+            SE = strel('disk',1);
+            bIm = imerode(bIm,SE);
+            
+            % Scale to output size
+            bIm = imresize3(bIm,sz);
+            
+            if ~isempty(filtSize)
+                % Filtered 1:  make the intensity more uniform along z
+                SE = strel('sphere',filtSize*2);
+                SE = imresize3(SE.Neighborhood,[1 1 2].*filtSize);
+                bIm = imclose(bIm,SE);
+                
+                % Filtered 2:  median filter for 3D volumn
+                bIm = medfilt3(bIm,[1 1 1].*filtSize);
+            end
+            
+            disp('Done.'); toc;
+        end
+        
+        %% Function:    plotRefIm
+        function plotRefIm(bIm,zSlice,fAlpha,scaleFactor,slideThickness)
+            
+            figure; tic;
+            
+            % Create transform object
+            ax = axes('XLim',[0 size(bIm,2)/scaleFactor],...
+                'YLim',[0 size(bIm,1)/scaleFactor],...
+                'ZLim',[0 size(bIm,3)*slideThickness]);
+            
+            scaleTform = TBS.getScaleTform(1/scaleFactor,3);
+            scaleTform(3,3) = slideThickness;
+            t = hgtransform('Parent',ax,'Matrix',scaleTform);
+            
+            % Plot & set transform
+            hold on; h = slice(bIm,[],[],zSlice);
+            for i = 1:numel(h)
+                h(i).EdgeColor = 'none';
+                h(i).FaceAlpha = fAlpha;
+                set(h(i),'Parent',t);
+            end
+            
+            xlabel('x'); ylabel('y'); zlabel('z');
+            g = gca; g.YDir = 'reverse'; g.ZDir = 'reverse';
+            colormap(flipud(gray)); caxis(prctile(bIm,[0 95],'all'));
+            daspect([1 1 1]); grid off;
+            disp('Done reference section.'); toc;
+        end
+        
+        %% Function:    nearestProj
+        % Discription:  get nearest projection along z
+        function [xyz,v] = nearestProj(xyz,v)
+            % Input:    xyz, mat, coordinates
+            %           v, intensity
+            
+            % Sort along z
+            [xyz,I] = sortrows(xyz,3,'ascend');
+            v = v(I);
+            
+            z = xyz(:,3);
+            
+            % Find the nearest value for every xy
+            [xyz,ia,~] = unique(xyz(:,1:2),'rows');
+            v = v(ia);
+            
+            xyz = [xyz,z(ia)];
+        end
+        
+        %% Function:    maxProj
+        % Discription:  get max projection along z
+        function [xyz,v] = maxProj(xyz,v)
+            % Sort along z
+            [v,I] = sortrows(v,'descend');
+            xyz = xyz(I,:);
+            
+             z = xyz(:,3);
+            
+            % Find the nearest value for every xy
+            [xyz,ia,~] = unique(xyz(:,1:2),'rows');
+            v = v(ia);
+            
+            xyz = [xyz,z(ia)];
+        end
+                
+        %% Function:    transformModel
+        % Discription:  transform bc and brain model 
+        function imOut = transformModel(sz,imxyz,imv,bxyz,bv,...
+                tform,background,cmap)
+            % Input:    sz, row vector, size
+            %           imxyz, mat, barcode image voxel coordiantes
+            %           imv, vector, barcode image color-code
+            %           bxyz, mat, brain image voxel coordinates
+            %           bv, vector, brain image intensity
+            %           tform, affine3d object for model rotation
+            %           background,str, white/black
+            %           cmap, mat, colormap
+            % Output:   imOut, RGB 2d image
+            
+            % Function handle for transformation
+            fh = @(X) round(transformPointsForward(tform,X));
+            
+            % Transform barcode & brain image 
+            imxyz = fh(imxyz);
+            bxyz = fh(bxyz);
+            
+            bv2 = bv.*(1-normalize(bxyz(:,3),'range'));%.*0.02;
+            bv = min(bv, bv2);
+                        
+            % 05292021: add depth
+            % Nearest projection for BC
+            [imxyz,imv] = TBS.nearestProj(imxyz,imv);
+            % Max projection for brain image
+            [bxyz,bv] = TBS.maxProj(bxyz,bv);
+                        
+            % Get 2D projected image
+            im = TBS.xyzv2im(sz(1:2),imxyz(:,1:2),imv); im = uint8(im);
+            bIm = TBS.xyzv2im(sz(1:2),bxyz(:,1:2),bv); bIm = uint8(bIm);
+                                 
+            % Make brain image transparent when there is BC signal
+            bIm(im > 0)=0;
+            
+            if strcmp(background,'w')
+                cmap = [1 1 1; cmap];
+            else
+                cmap = [0 0 0; cmap];
+            end
+            
+            % Get RGB image
+            imOut = TBS.ind2rbg3(im,cmap);
+            
+%             % Add depth: 05292021, only tested for k-background
+%             imDepth = TBS.xyzv2im(sz(1:2),imxyz(:,1:2),imxyz(:,3)); 
+%             imDepth = uint8(imDepth);
+%             
+%             bImDepth = TBS.xyzv2im(sz(1:2),bxyz(:,1:2),bxyz(:,3)); 
+%             bImDepth = uint8(bImDepth);
+%             
+%             imOut = imOut - imDepth;
+%             bIm = bIm - bImDepth;            
+            
+            if strcmp(background,'w')
+                imOut = imcomplement(imOut);
+                imOut = imOut + bIm;                    
+                imOut = imcomplement(imOut);
+            else
+                imOut = imOut + bIm;                
+            end    
+        end
+        
+        %% Function:    tracingPrint
+        % Discription:  printed version of the tracing result
+        function tracingPrint(im,bImOut,zPrctile,background)
+            % Input:    im, mat, barcode RGB image
+            %           bImOut, mat, brain image
+            %           zPrctile, row vector, prctile for dividing z
+            %           background, str, black or white
+            
+            % Adjust the brain image according to the background
+            switch background
+                case 'w'
+                    % Adjust the brain edge brightness
+                    bImOut = bImOut+20;
+                    bImOut = max(bImOut,190);
+                case 'k'
+                case 'none'
+                    background = 'w';
+                    bImOut = uint8(ones(size(bImOut)).*inf);
+                otherwise
+                    error('Currently only support black and white background.')                        
+            end
+                       
+            % Divide the z into parts
+            sz = size(bImOut);
+            z = prctile(1:sz(3),zPrctile);
+            z = round(z);
+            
+            % reshape into RGB
+            im = reshape(im,[sz 3]);
+            
+            % Make the line thicker
+            SE = strel('sphere',1);
+            for i = 1:size(im,4)
+                switch background
+                    case 'w'
+                        im(:,:,:,i) = imerode(im(:,:,:,i),SE);
+                    case 'k'
+                        im(:,:,:,i) = imdilate(im(:,:,:,i),SE);
+                end
+            end
+            
+            % Only include 11 slice of the center of each part
+            bImZ = arrayfun(@(X) X+[-3:3],(z(1:end-1)+z(2:end))./2,...
+                'Uniformoutput',false);
+            bImZ = horzcat(bImZ{:});
+            bImZ = round(bImZ);
+            bImZ = unique(bImZ);
+            bImZ(bImZ < 1) = []; bImZ(bImZ > sz(3)) = [];
+            
+            % Set empty z to white
+            I = ~ismember(1:sz(3),bImZ);
+            
+            % Volumn
+            switch background
+                case 'w'
+                    bImOut(:,:,I) = repmat(255,[sz(1:2) sum(I)]);
+                    im = min(im,repmat(bImOut,1,1,1,3));
+                case 'k'
+                    bImOut(:,:,I) = zeros([sz(1:2) sum(I)]);
+                    im = max(im,repmat(bImOut,1,1,1,3));
+            end
+            
+            % Fig: Each section -------------------------------------------
+            for i = 1:numel(z)-1
+                iim = im(:,:,z(i):z(i+1),:);
+                
+                switch background
+                    case 'w'
+                        iim = min(iim,[],3);
+                    case 'k'
+                        iim = max(iim,[],3);
+                end
+                
+                iim = squeeze(iim);
+                figure; imshow(iim);
+            end
+            
+            % Fig: Projection ---------------------------------------------
+            % Transfom for projection
+            r = TBS.rotx(-75);
+            r(4,4) = 1;
+            r = affine3d(r);
+            
+            tfIm = uint8([]);            
+            switch background
+                case 'w'                 
+                    for i = 1:3
+                        tfIm(:,:,:,i) = imwarp(im(:,:,:,i),r,'nearest','FillValues',255);
+                    end
+                    
+                     tfIm = min(tfIm,[],3);
+                    
+                case 'k'
+                     for i = 1:3
+                        tfIm(:,:,:,i) = imwarp(im(:,:,:,i),r,'nearest','FillValues',0);
+                    end
+                    
+                    tfIm = max(tfIm,[],3);
+            end
+            
+            tfIm = squeeze(tfIm);
+            figure; imshow(tfIm);            
         end
         
     end
     
-    methods (Static)    % Get corresponding annotation
-        %% Function:    getCorrespondAnnotSection
-        function annotationFix = getCorrespondAnnotSection(...
-                annotationGraph,allenAnnoResolution,sectionNum,...
-                bufferSlidesInAnno,correspAnnotSection,correspSectionName,...
-                xRotateD,yRotateD,sectionThick,relativeSectionThick)
-            % Input:    annotationGraph, 3-d mat, annotation graph
-            %           allenAnnoResolution, number, resolution of allen
-            %           annotation graph
-            %           sectionNum, mat, number of the brains secitons
-            %           bufferSlidesInAnno, number, # of buffer slides in
-            %           annotation graph
-            %           correspAnnotSection, number, the matched section
-            %           number in annotation graph
-            %           correspSectionName, number, the matched brain
-            %           section number
-            %           xRotateD/yRotateD, number, degree of roation along
-            %           x/y-axis
-            %           imageSetting, structure
-            %           relativeSectionThick, num, relative seciton thick
-            % Output:   mat, the annotation graph corresponding to the brain
-            % sections
-            % Note: relativeSectionThick and imageSetting, has some
-            % overlap, need to optimize later
-            
-            sectionRange = [min(sectionNum), max(sectionNum)];
-            
-            % Get the range of brain sections in annotation graph ---------------------
-            % 0.5 as the section sits in the middle
-            annotSectionRange = [sectionRange(1)-0.5; sectionRange(2)+0.5];
-            % Set the corresponding section number as 0
-            annotSectionRange = annotSectionRange- correspSectionName;
-            annotSectionRange = annotSectionRange.*sectionThick...
-                ./allenAnnoResolution;
-            % Set the center to the corresponding annotation setting
-            annotSectionRange = annotSectionRange+correspAnnotSection;
-            annotSectionRange = round(annotSectionRange);
-            
-            % Get the corresponding section range from the annotation graph
-            % with buffer regions
-            annotationFix = annotationGraph(:,:,...
-                annotSectionRange(1)-bufferSlidesInAnno+1:...
-                annotSectionRange(2)+bufferSlidesInAnno);
-            
-            % Get transformation matrix -----------------------------------
-            
-            % Rotation along Y axis
-            tformYrotate = eye(4);
-            tformYrotate(1,1) = cosd(yRotateD); tformYrotate(1,3) = -sind(yRotateD);
-            tformYrotate(3,1) = sind(yRotateD); tformYrotate(3,3) = cosd(yRotateD);
-            tformYrotate(4,3) = tand(yRotateD)*size(annotationFix,2)/2;
-            
-            % Ratation along X axis
-            tformXrotate = eye(4);
-            tformXrotate(2,2) = cosd(xRotateD); tformXrotate(3,3) = cosd(xRotateD);
-            tformXrotate(2,3) = sind(xRotateD); tformXrotate(3,2) = -sind(xRotateD);
-            tformXrotate(4,3) = tand(xRotateD)*size(annotationFix,1)/2;
-            
-            % Combine X and Y rotation- coarse alignment
-            tformCoarseFix = tformYrotate*tformXrotate;
-            
-            % Exclude the buffer region
-            tformCoarseFix(4,3) = tformCoarseFix(4,3)-bufferSlidesInAnno;
-            
-            % Scale matrix
-            % scale annotation graph thickness back to the section thickness
-            scaleZtform = eye(4);
-            scaleZtform(3,3) = allenAnnoResolution/relativeSectionThick;
-            
-            % Combine tform with scale matrix
-            tformCoarseFix = tformCoarseFix*scaleZtform;
-            
-            % Transform the annotation graph ------------------------------
-            % Output size, rescale the Z
-            R = size(annotationFix);
-            % Account for the size change during rotation
-            R(1:2) = R(1:2)./[cosd(xRotateD) cosd(yRotateD)];
-            % Same slides as the section range
-            R(3) = sectionRange(2)-sectionRange(1)+1;
-            R = round(R);
-            
-            % Need to use 'nearest' for retaining the region ID
-            annotationFix = imwarp(annotationFix,affine3d(tformCoarseFix),...
-                'nearest','OutputView',imref3d(R));
-        end
-        
-    end
 end
 
 
