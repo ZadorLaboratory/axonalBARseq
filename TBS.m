@@ -9301,7 +9301,7 @@ classdef TBS % Terminal BARseq
             
             % Find the min and max AP-value in stack area
             roiAP = nonzeros(roi);
-            roiAP = roiAP.*refScale;
+            roiAP = roiAP.*refScale; % <--------------------------------------- ???? why * refScale
             roiAP = [floor(min(roiAP)),ceil(max(roiAP))];
         end
 
@@ -9372,6 +9372,7 @@ classdef TBS % Terminal BARseq
                 
                 TFv = ctxV == 0;
                 % nonzeroAvgFilter(im,h,exclude0)
+                % exclude0: whether set the 0-pixel to 0 in output
                 ctxV2 = TBS.nonzeroAvgFilter(ctxV,SE,false);
                 ctxV(TFv) = ctxV2(TFv);
             end
@@ -9451,14 +9452,72 @@ classdef TBS % Terminal BARseq
             % Delete 0
             mlapdDot = cellfun(@(X) X(any(X,2),:),mlapdDot,'UniformOutput',false);
         end
-                
+        
+        %% Function:    inCtxCluster
+        % Discription:  whether a rolony is within a cortical cluster
+        function [clusterRng, localRng] = inCtxCluster(mlapdDot,center,...
+                rng,figOutTF,mlapdSoma,regionOutlineFlat)
+            % Input:    mlapdDot, cell, mlapd coordinates of rolonies
+            %           center, vector, center of cluster
+            %           rng, num, range to be counted within cluster
+            %           figureOutTF, logical, whether have figure output
+            %           mlapdSoma, mat, mlapd coordinates of soma location
+            %           regionOutlineFlat, for region outline in annotation map
+            % Output:   clusterRng, cell of logical, whether the rolony within the
+            % cluster
+            %           localRng, cell of logical, whether the rolony within the
+            %           cluster or the surrounding area
+            
+            surroundRng = rng*sqrt(2);
+            
+            % Project to the cluster
+            % Distance to the cluster center
+            D = cellfun(@(X) pdist2(X(:,1:2),center),mlapdDot,'UniformOutput',false);
+            
+            % Within cluster and local (+surrounding) rolony density
+            clusterRng = cellfun(@(X) X<= rng,D,'UniformOutput',false);
+            localRng = cellfun(@(X) X<= surroundRng,D,'UniformOutput',false);
+            
+            if ~figOutTF
+                return
+            end
+            
+            % Visualize the cluster & surrounding area --------------------------------
+            c = vertcat(clusterRng{:}) + vertcat(localRng{:});
+            xy = vertcat(mlapdDot{:});
+            TF = any(xy,2);
+            
+            figure; TBS.plotRegionRef(mlapdSoma,regionOutlineFlat);
+            hold on; scatter(xy(TF,1),xy(TF,2),1,c(TF),'filled','MarkerFaceAlpha',0.05);
+            
+            % Within cluster-red; surrounding area-blue; otherwise-black
+            colormap([0 0 0; 0 0 1; 1 0 0]);
+            
+            % Crop region of interest
+            % Only include AP with data
+            lim = [min(xy(TF,2)),max(xy(TF,2))];
+            g = gca; g.YLim = lim;
+            % Only include one hemisphere
+            if center(1) > 0
+                g.XLim(1) = 0;
+            else
+                g.XLim(2) = 0;
+            end
+            
+            g.XTick = 0:2000:10000; 
+            g.YTick = g.XTick;
+            
+            xlabel('ML (\mum)'); ylabel('AP (\mum)');
+            TBS.axLabelSettings('Myriad Pro',12);
+        end
+        
     end
     
-    methods (Static) % Paper analysis =====================================
+     methods (Static)   % Paper analysis =====================================
         %% Function:    BCtable2cell
-        % Discription:  change BCtable to cell with one cell per bc
+        % Description:  change BCtable to cell with one cell per bc
         function BCcell = BCtable2cell(BCtable,varName)
-            % Input:    BCtable, table, 
+            % Input:    BCtable, table, one image per row
             %           varName, str, content of the variable into the cell
             % Output:   BCcell, cell, info from one BC per cell
             
@@ -9474,26 +9533,104 @@ classdef TBS % Terminal BARseq
             for i = 1:nBC
                 row = id == i;
                 BCcell{i} = var(row,:);
+            end            
+        end
+        
+        %% Function:    plotSoma
+        % Description:  plot soma on ML-Depth axes
+        function plotSoma(mlapdSoma,c)
+            % Input:    mlapdSoma, mat, ML-AP-Depth for soma location on flatmap
+            %           c, vector, index
+            
+            I = any(mlapdSoma,2);
+            
+            % Random shuffle
+            I = find(I); I = TBS.shuffleRows(I);
+            
+            disp(['Total soma plotted: ',num2str(numel(I))]);
+            
+            figure; scatter(mlapdSoma(I,1),mlapdSoma(I,3),10,c(I),'filled');
+            ylabel('Soma depth (%)','FontSize',15);
+            g = gca; g.YDir = 'reverse'; g.YLim = [0 100]; g.XTick = [];
+            set(gcf,'Position',[100 100 300 300]);
+        end
+        
+        %% Function:    kmeansDepthHist
+        % Discription:  group depth histocounts, sort index using depth
+        function idx = kmeansDepthHist(X,k,C)
+            % Input:    X, mat, data input
+            %           k, number, output group number
+            %           C, mat, start centroid
+            % Output:   idx, vector, group number
+            
+            % X2 = cumsum(X,2);
+            
+            if nargin == 3
+                idx = kmeans(X,k,'Start',C);
+            elseif nargin == 2
+                idx = kmeans(X,k,'Replicates',50);
             end
             
+            % % Mean max column of the group
+            [~,I] = max(X,[],2);
+            
+            meanI = accumarray(idx,I,[],@median);
+            
+            % Sort group using max column
+            [~,I] = sort(meanI,'ascend');
+            
+            % Sorted rank
+            [~,I] = sort(I,'ascend');
+            
+            % Use sorted rank as index
+            idx = I(idx);            
+        end
+        
+        %% Function:    depthHeatmapSetting
+        % Discription:  figure settings for heatmap of projeciton histocounts
+        function depthHeatmapSetting(h,X,edges)
+            % Input:    h, obj, handle of the heatmap
+            %           X, mat, input for heatmap
+            %           edges, vector, edges for histogram
+            
+            h.GridVisible = 'off';
+            h.CellLabelColor = 'none';
+            
+            % Axis setting
+            h.XDisplayLabels = nan(size(X,2),1);
+            % Only label the top and bottom for y-axis
+            h.YDisplayLabels = nan(size(X,1),1);
+            h.YDisplayLabels{1} = edges(1); h.YDisplayLabels{end} = edges(end);
+            h.YLabel = 'Projection depth (%)';
+            
+            h.FontSize = 12;
+            
+            % Colormap, 0-10%
+            colormap(flipud(gray)); caxis([0 10]);            
+            S = struct(h); S.Colorbar.Label.String = 'Projection (%)';            
         end
         
         %% Function:    focalProjPct
-        % Discription:  max focal projection percentage
-        function p = focalProjPct(xy,dia)
-            % 12132021: include itself
-            % Input:    xy, mat, ML-AP coordinates
-            %           dia, num, diameter for focal projection
-            % Ouptut:   p, num, percentage
+        % Description:  evaludate the level of focal projection
+        function D = focalProjPct(mlap,p)
+            % 01262021: use mean distance of p% closest neighbors
+            % Input:    mlap, mat, flatmap coordinates
+            %           p, num, the clost precentage of rolony
+            % Output:   D, vector, mean distance represent the focal
+            % projection level of this cell
             
-            D = squareform(pdist(xy));
-            D = D <= dia;
+            mlap = mlap(:,1:2);
             
-            % Convert to percentage
-            p = sum(D,1)./size(D,1);
-            p = p.*100;
+            % Number of rolony to pick this neuron
+            n = size(mlap,1);
+            n = round(n.*p);
             
-            p = max(p);            
+            % Get the distance of the closet N rolony
+            D = pdist2(mlap,mlap,'euclidean','Smallest',n+1);
+            % Delete itself
+            D = D(2:end,:);
+            
+            D = mean(D,1);
         end
         
     end
@@ -9955,7 +10092,8 @@ classdef TBS % Terminal BARseq
                 
                 if len > 1
                     iDot =  mat2cell(iDot,2,[1 1 1]);
-                    iDot = cellfun(@(X) interp1([1 len],X,1:len)',iDot,...
+                    % 02142022: change 1:len to 0:len
+                    iDot = cellfun(@(X) interp1([0 len],X,0:len)',iDot,...
                         'UniformOutput',false);
                     iDot = horzcat(iDot{:});
                 end
@@ -10018,414 +10156,63 @@ classdef TBS % Terminal BARseq
             % Coordinates for barcode voxel
             bcVoxel = [x y z];            
         end
-        
-        %% Function:    plotBCline
-        % Discription:  Plot barcode line in MATLAB
-        function plotBCline(somaXYZ,dotXYZ,distThreshold,scaleTform,cmap)
-            % Input:    somaXYZ, mat, soma locaiton coordinates in micron
-            %           dotXYZ, cell, dot location coordinates in micron
-            %           per cell
-            %           distThreshold, num, max distance for rolony-line
-            %           scaleTform, mat, scaling matrix for micron to
-            %           output, to speed up
-            %           sz, row vector, output image size
-            %           dilateR, num, dilation size for soma
-            % Output:   bcVoxel, cell, voxel location for output, one
-            % barcode per cell
-                        
-            dotXYZ = TBS.horzcatArea(dotXYZ);
+                               
+        %% Function:    BCmodel (main)
+        % Discription:  get model of barcoded neurons for visualization
+        function [im, outline] = BCmodel(xyzDot,xyzSoma,c,scaleFactor,annoMap,refSetting)
+            % Input:    xyzDot, cell, rolony coordinates in registrated xyz-space
+            %           xyzSoma, mat, soma coordinates in registrated xyz-space
+            %           c, vector, color index
+            %           scaleFactor, num, scale factor for output
+            %           annoMap, mat stack, CCF annotation image stack, for brain
+            %           outline
+            %           refSetting, struct
+            % Output:   im, mat, image stack for BC model (scaled)
+            %           outline, mat, brain outline (scaled)
             
-            % Include soma during connecting dots
-            dotXYZ2 = mat2cell(somaXYZ,ones(size(somaXYZ,1),1),size(somaXYZ,2));
-            dotXYZ = cellfun(@(X,Y) [X;Y],dotXYZ,dotXYZ2,'Uniformoutput',false);
+            % Threshold for combine into a cluster (um)
+            distThreshold = 1000;
+            % Convert to micron/pixel in registrated xyz-space
+            distThreshold = distThreshold.*refSetting.refScale;
             
-            linePair = cellfun(@(X) TBS.getLinePair(X,distThreshold),...
-                dotXYZ,'UniformOutput',false);
+            % Voxel dilation for soma
+            dilateR = 4./scaleFactor;
             
-            % Scale down for visilization
-            if ~isempty(scaleTform)
-                somaXYZ = somaXYZ*scaleTform;
-                dotXYZ = cellfun(@(X) X*scaleTform,dotXYZ,'Uniformoutput',false);
+            % Scaling
+            xyzSoma = xyzSoma.*scaleFactor;
+            xyzDot = cellfun(@(X) X.*scaleFactor,xyzDot,'Uniformoutput',false);
+            distThreshold = distThreshold.*scaleFactor;
+            dilateR = dilateR.*scaleFactor; dilateR = ceil(dilateR);
+            
+            % Brain outline
+            outline = TBS.getBrainOutline(annoMap,5);
+            outline = imresize3(outline,scaleFactor);
+            
+            sz = size(outline);
+            
+            im = {};
+            parfor i = 1:numel(xyzDot) % parfor
+                % getBCmodel(somaXYZ,dotXYZ,distThreshold,sz,dilateR)
+                im{i,1} = TBS.getBCmodel(xyzSoma(i,:),xyzDot{i},distThreshold,sz,dilateR);
             end
             
-            % One cell per bc, each cell contains voxel location
-            for j = 1:size(dotXYZ,1)
-                
-                % Get dot coordinates for every pair
-                jDotXYZ = dotXYZ{j};
-                jLine = linePair{j};
-                jc = cmap(j,:);
-                
-                for i = 1:size(jLine,1)
-                    iPair = jLine{i};
-                                        
-                    sz = 1;
-                    lineStyle = '-';
-                    
-                    line(jDotXYZ(iPair,1),jDotXYZ(iPair,2),...
-                        'Color',jc,'LineWidth',sz,'LineStyle',lineStyle);
-                end
-                                
-                % Plot soma
-                scatter(somaXYZ(j,1),somaXYZ(j,2),80,jc,...
-                    'filled','MarkerFaceAlpha',1);
-            end            
-        end        
-                
-        %% Function:    plotBCim
-        % Discription:  plot barcoded image
-        function [im, cmap] = plotBCim(sz,bcIm,c)
-            % Input:    sz, mat, image size
-            %           bcIm, cell, voxel coordinates for each BC
-            %           c, mat/mat, color
-            % Output:   im, uint8 image stack
-            
-            im = uint8(zeros(sz));            
-            cmap = [];            
-            for i = 1:numel(bcIm)
-                
-                ibc = bcIm{i};
-                if isempty(ibc)
-                    continue
-                end
-                
-                if ~isempty(c) && ~isempty(c{i}) && size(c{i},2) == 1
-                    ic = c{i};
-                else
-                    ic = max(im,[],'all')+1;
-                end
-                
-                % Get RGB colormap
-                if ~isempty(c) && ~isempty(c{i}) && size(c{i},2) == 3
-                    cmap(ic,:) = c{i};
-                end
-                
-                if ic > 255
-                    warning('Currently only support uint8 image')
-                    return
-                end
-                
-                im2 = TBS.xyzv2im(sz,ibc,ic);
-                im = max(im,im2);
+            % Color for individual barcode cell
+            if isempty(c)
+                % BC id as color
+                c = (1:numel(xyzDot))';
             end
+            c = TBS.repmat2cell(c,im);
             
-        end
-        
-        %% Function:    colorBD
-        % Discription:  generate different brightness and darkness of the
-        % color
-        function c2 = colorBD(c,m)
-            % Input:    c, mat, RGB color
-            %           m, num, number of color
-            % Output:   c2, m variants of color c
+            im = vertcat(im{:});
+            c = vertcat(c{:});
             
-            if m ==2
-                c2 = [-0.4 0];
-            elseif m == 3
-                c2 = [-0.4 -0.2 0];
-            elseif m == 4
-                c2 = [-0.4 -0.2 0 0.2];
-            else
-                % Different variants of color c
-                c2 = -0.4:0.8/(m-1):0.4;
-            end
+            % Assemble to image
+            im = TBS.xyzv2im(sz,im,c);
             
-            
-            c2 = c2'; c2 = repmat(c2,1,3);
-            c2 = c2 + c;
-            
-            % Max and min of RGB is 1 and 0
-            c2 = min(c2,1); c2 = max(c2,0);
-        end
-        
-        %% Function:    ind2rgb3
-        % Discription:  convert index 3D-image to RGB image
-        function imOut = ind2rbg3(im,cmap)
-            % Input:    im, mat, image stack
-            %           cmap, mat, colormap
-            % Output:   imOut, mat, image stack with channel appened to z
-            
-            classType = class(im);
-            classFh = @(X) cast(X,classType);
-            
-            % Channelintensity for RGB
-            cmap = cmap.* double(classFh(inf));
-            cmap = round(cmap);
-            cmap = classFh(cmap);
-            
-            for i = 1:3
-                icmap = cmap(:,i);
-                
-                % im+1 for the index
-                if i == 1
-                    imOut = icmap(im+1);
-                else
-                    imOut = cat(3,imOut,icmap(im+1));
-                end
-            end
-        end
-        
-        %% Function:    brainImOut
-        % Discription:  filter and correct the brain image for output
-        function bIm = brainImOut(bIm,sz,filtSize)
-            % Input & output:    bIm, mat, image stack
-            %           sz, row vector, output image size
-            %           filtSize, num, filter size
-            % Note, filter size may need to be changed for different size
-            
-            disp('Getting brainImOut...'); tic;
-            
-            % Background subtraction
-            SE = strel('disk',1);
-            bIm = imerode(bIm,SE);
-            
-            % Scale to output size
-            bIm = imresize3(bIm,sz);
-            
-            if ~isempty(filtSize)
-                % Filtered 1:  make the intensity more uniform along z
-                SE = strel('sphere',filtSize*2);
-                SE = imresize3(SE.Neighborhood,[1 1 2].*filtSize);
-                bIm = imclose(bIm,SE);
-                
-                % Filtered 2:  median filter for 3D volumn
-                bIm = medfilt3(bIm,[1 1 1].*filtSize);
-            end
-            
-            disp('Done.'); toc;
-        end
-        
-        %% Function:    plotRefIm
-        function plotRefIm(bIm,zSlice,fAlpha,scaleFactor,slideThickness)
-            
-            figure; tic;
-            
-            % Create transform object
-            ax = axes('XLim',[0 size(bIm,2)/scaleFactor],...
-                'YLim',[0 size(bIm,1)/scaleFactor],...
-                'ZLim',[0 size(bIm,3)*slideThickness]);
-            
-            scaleTform = TBS.getScaleTform(1/scaleFactor,3);
-            scaleTform(3,3) = slideThickness;
-            t = hgtransform('Parent',ax,'Matrix',scaleTform);
-            
-            % Plot & set transform
-            hold on; h = slice(bIm,[],[],zSlice);
-            for i = 1:numel(h)
-                h(i).EdgeColor = 'none';
-                h(i).FaceAlpha = fAlpha;
-                set(h(i),'Parent',t);
-            end
-            
-            xlabel('x'); ylabel('y'); zlabel('z');
-            g = gca; g.YDir = 'reverse'; g.ZDir = 'reverse';
-            colormap(flipud(gray)); caxis(prctile(bIm,[0 95],'all'));
-            daspect([1 1 1]); grid off;
-            disp('Done reference section.'); toc;
-        end
-        
-        %% Function:    nearestProj
-        % Discription:  get nearest projection along z
-        function [xyz,v] = nearestProj(xyz,v)
-            % Input:    xyz, mat, coordinates
-            %           v, intensity
-            
-            % Sort along z
-            [xyz,I] = sortrows(xyz,3,'ascend');
-            v = v(I);
-            
-            z = xyz(:,3);
-            
-            % Find the nearest value for every xy
-            [xyz,ia,~] = unique(xyz(:,1:2),'rows');
-            v = v(ia);
-            
-            xyz = [xyz,z(ia)];
-        end
-        
-        %% Function:    maxProj
-        % Discription:  get max projection along z
-        function [xyz,v] = maxProj(xyz,v)
-            % Sort along z
-            [v,I] = sortrows(v,'descend');
-            xyz = xyz(I,:);
-            
-             z = xyz(:,3);
-            
-            % Find the nearest value for every xy
-            [xyz,ia,~] = unique(xyz(:,1:2),'rows');
-            v = v(ia);
-            
-            xyz = [xyz,z(ia)];
-        end
-                
-        %% Function:    transformModel
-        % Discription:  transform bc and brain model 
-        function imOut = transformModel(sz,imxyz,imv,bxyz,bv,...
-                tform,background,cmap)
-            % Input:    sz, row vector, size
-            %           imxyz, mat, barcode image voxel coordiantes
-            %           imv, vector, barcode image color-code
-            %           bxyz, mat, brain image voxel coordinates
-            %           bv, vector, brain image intensity
-            %           tform, affine3d object for model rotation
-            %           background,str, white/black
-            %           cmap, mat, colormap
-            % Output:   imOut, RGB 2d image
-            
-            % Function handle for transformation
-            fh = @(X) round(transformPointsForward(tform,X));
-            
-            % Transform barcode & brain image 
-            imxyz = fh(imxyz);
-            bxyz = fh(bxyz);
-            
-            bv2 = bv.*(1-normalize(bxyz(:,3),'range'));%.*0.02;
-            bv = min(bv, bv2);
-                        
-            % 05292021: add depth
-            % Nearest projection for BC
-            [imxyz,imv] = TBS.nearestProj(imxyz,imv);
-            % Max projection for brain image
-            [bxyz,bv] = TBS.maxProj(bxyz,bv);
-                        
-            % Get 2D projected image
-            im = TBS.xyzv2im(sz(1:2),imxyz(:,1:2),imv); im = uint8(im);
-            bIm = TBS.xyzv2im(sz(1:2),bxyz(:,1:2),bv); bIm = uint8(bIm);
-                                 
-            % Make brain image transparent when there is BC signal
-            bIm(im > 0)=0;
-            
-            if strcmp(background,'w')
-                cmap = [1 1 1; cmap];
-            else
-                cmap = [0 0 0; cmap];
-            end
-            
-            % Get RGB image
-            imOut = TBS.ind2rbg3(im,cmap);
-            
-%             % Add depth: 05292021, only tested for k-background
-%             imDepth = TBS.xyzv2im(sz(1:2),imxyz(:,1:2),imxyz(:,3)); 
-%             imDepth = uint8(imDepth);
-%             
-%             bImDepth = TBS.xyzv2im(sz(1:2),bxyz(:,1:2),bxyz(:,3)); 
-%             bImDepth = uint8(bImDepth);
-%             
-%             imOut = imOut - imDepth;
-%             bIm = bIm - bImDepth;            
-            
-            if strcmp(background,'w')
-                imOut = imcomplement(imOut);
-                imOut = imOut + bIm;                    
-                imOut = imcomplement(imOut);
-            else
-                imOut = imOut + bIm;                
-            end    
-        end
-        
-        %% Function:    tracingPrint
-        % Discription:  printed version of the tracing result
-        function tracingPrint(im,bImOut,zPrctile,background)
-            % Input:    im, mat, barcode RGB image
-            %           bImOut, mat, brain image
-            %           zPrctile, row vector, prctile for dividing z
-            %           background, str, black or white
-            
-            % Adjust the brain image according to the background
-            switch background
-                case 'w'
-                    % Adjust the brain edge brightness
-                    bImOut = bImOut+20;
-                    bImOut = max(bImOut,190);
-                case 'k'
-                case 'none'
-                    background = 'w';
-                    bImOut = uint8(ones(size(bImOut)).*inf);
-                otherwise
-                    error('Currently only support black and white background.')                        
-            end
-                       
-            % Divide the z into parts
-            sz = size(bImOut);
-            z = prctile(1:sz(3),zPrctile);
-            z = round(z);
-            
-            % reshape into RGB
-            im = reshape(im,[sz 3]);
-            
-            % Make the line thicker
+            % Thicker axon for visualization
             SE = strel('sphere',1);
-            for i = 1:size(im,4)
-                switch background
-                    case 'w'
-                        im(:,:,:,i) = imerode(im(:,:,:,i),SE);
-                    case 'k'
-                        im(:,:,:,i) = imdilate(im(:,:,:,i),SE);
-                end
-            end
+            im = imdilate(im,SE);
             
-            % Only include 11 slice of the center of each part
-            bImZ = arrayfun(@(X) X+[-3:3],(z(1:end-1)+z(2:end))./2,...
-                'Uniformoutput',false);
-            bImZ = horzcat(bImZ{:});
-            bImZ = round(bImZ);
-            bImZ = unique(bImZ);
-            bImZ(bImZ < 1) = []; bImZ(bImZ > sz(3)) = [];
-            
-            % Set empty z to white
-            I = ~ismember(1:sz(3),bImZ);
-            
-            % Volumn
-            switch background
-                case 'w'
-                    bImOut(:,:,I) = repmat(255,[sz(1:2) sum(I)]);
-                    im = min(im,repmat(bImOut,1,1,1,3));
-                case 'k'
-                    bImOut(:,:,I) = zeros([sz(1:2) sum(I)]);
-                    im = max(im,repmat(bImOut,1,1,1,3));
-            end
-            
-            % Fig: Each section -------------------------------------------
-            for i = 1:numel(z)-1
-                iim = im(:,:,z(i):z(i+1),:);
-                
-                switch background
-                    case 'w'
-                        iim = min(iim,[],3);
-                    case 'k'
-                        iim = max(iim,[],3);
-                end
-                
-                iim = squeeze(iim);
-                figure; imshow(iim);
-            end
-            
-            % Fig: Projection ---------------------------------------------
-            % Transfom for projection
-            r = TBS.rotx(-75);
-            r(4,4) = 1;
-            r = affine3d(r);
-            
-            tfIm = uint8([]);            
-            switch background
-                case 'w'                 
-                    for i = 1:3
-                        tfIm(:,:,:,i) = imwarp(im(:,:,:,i),r,'nearest','FillValues',255);
-                    end
-                    
-                     tfIm = min(tfIm,[],3);
-                    
-                case 'k'
-                     for i = 1:3
-                        tfIm(:,:,:,i) = imwarp(im(:,:,:,i),r,'nearest','FillValues',0);
-                    end
-                    
-                    tfIm = max(tfIm,[],3);
-            end
-            
-            tfIm = squeeze(tfIm);
-            figure; imshow(tfIm);            
         end
         
     end
