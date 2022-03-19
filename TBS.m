@@ -394,6 +394,24 @@ classdef TBS % Terminal BARseq
             end
         end
         
+        %% Function:    xyz2v
+        % Discription:  get the value
+        function v = xyz2v(xyz,im)
+            % Input:    xyz, mat, coordinates
+            %           im, 3-D or 2-D mat
+            % Output:   v, vector,
+            
+            xyz = round(xyz);
+            
+            if size(xyz,2) == 2
+                ind = sub2ind(size(im),xyz(:,2),xyz(:,1));
+            elseif size(xyz,2) == 3
+                ind = sub2ind(size(im),xyz(:,2),xyz(:,1),xyz(:,3));
+            end
+            
+            v = im(ind);
+        end             
+        
         %% Funciton:    getImValidLim
         % Discription:  get the valid pixel limits along an axis
         function axLim = getImValidLim(im,axNum)
@@ -637,32 +655,54 @@ classdef TBS % Terminal BARseq
         
         %% Function:    nonzeroAvgFilter
         % Discription:  average filter of non-zero elements
-        function im = nonzeroAvgFilter(im,h,exclude0)
+        function im = nonzeroAvgFilter(im,h)
+            % 03162022, delete exclude0
             % Input & output:  im, mat, image
             %           h, mat, filter
-            %           exclude0, logical, whether set 0-pixel in the
-            %           output to 0
-            
-            TF = im == 0;
-            
+                        
             % Sum
             im2 = convn(im,h,'same');
             
             % number of voxel/pixel
             fh = @(X) cast(X,class(im));
-            n = fh(im > 0);
+            n = fh(im ~= 0);
             n = convn(n,h,'same');
             
             im = im2./n;
             
-            % Set the 0-pixel back to 0
-            if nargin < 3 || exclude0                
-                im(TF)=0;
-            end
-            
             % Delete pixel with nan
             TF = isnan(im);
             im(TF) = 0;
+        end
+                
+        %% Function:    nonzeroMedFilt
+        function im = nonzeroMedFilt(im,h)
+            % Note: parfor is used
+            % Input:    h, logical matrix, filter voxel
+                        
+            sz = size(im);
+            
+            % Loop through all voxel within the filter
+            I = find(h);
+            
+            disp(['Function nonzeroMedFilt in progress, filter size ',...
+                num2str(numel(I))]);
+                        
+            im2 = [];
+            parfor i = 1:numel(I) % parfor
+                h2 = false(size(h));
+                h2(i) = true;
+                
+                iIm = convn(im,h2,'same');
+                im2(:,i) = reshape(iIm,[],1);
+                disp(['Voxel: ',num2str(i)]);
+            end
+            
+            % Set 0 to nan, get median without nan
+            im2(im2 == 0) = nan;
+            im2 = median(im2,2,'omitnan');
+            
+            im = reshape(im2,sz);            
         end
                 
         %% Function:    getMedEdges
@@ -687,6 +727,19 @@ classdef TBS % Terminal BARseq
                 g.(ax{i}).Label.FontName = frontName;
                 g.(ax{i}).Label.FontSize = frontSize;
             end
+        end
+        
+        %% Function:    accumarrayMean
+        % Discription:  accumarray-mean function, faster
+        function B = accumarrayMean(ind,data)
+            % Input:    ind, vector, Output indices
+            %           data, vector
+            % Output:   B, vector, mean of data for each indices
+            
+            data = accumarray(ind,data);
+            n = accumarray(ind,1);
+            
+            B = data./n;
         end
         
     end
@@ -727,7 +780,7 @@ classdef TBS % Terminal BARseq
         end
         
         %% Function:    getInitialFixSeq
-        % Discription:  define fix seq using directory
+        % Discription:  define fix seq using directory, allow special case
         function initialFixSeq = getInitialFixSeq(directory)
             % Input:    directory, struct/str
             % Output:   initialFixSeq, num
@@ -770,7 +823,7 @@ classdef TBS % Terminal BARseq
             tileSetting = [1 1; 2 2; 3 2; 3 3; 11 20];
             imageSetting.tilePos = TBS.getTilePosition(tileSetting);
             
-            if isempty(directory)
+            if nargin == 1 || isempty(directory)
                 return
             end
             
@@ -898,6 +951,72 @@ classdef TBS % Terminal BARseq
             end
         end
         
+         %% Function:    QCtform
+        % Discription:  quanlity check for tform using scale
+        function TF = QCtform(tform,tolerance)
+            % Input:    tform, mat, transformation matrix
+            %           tolerance,num, tolerance of error, <1
+            % Output:   TF, logical, whether it pass transformation matrix
+            
+            % Defualt tolerance
+            if nargin == 1
+                tolerance = 0.8;
+            end
+            
+            % 07032021: exclude reflection
+            if tform(1,1) < 0 && tform(2,2) < 0
+                TF = false; return
+            end
+            
+            % Check individual axis
+            scale = sum(abs(tform(1:2,1:2)),2);
+            % 1/toerance: > 1 (upper limit)
+            TF1 = all(scale >= tolerance & scale <= 1/tolerance);
+            
+            % Check area size (determinant)
+            % No reflection is allowed (no negative determinant)
+            area = det(tform(1:2,1:2));
+            TF2 = area >= tolerance & area <= 1/tolerance;
+            
+            TF = TF1 & TF2;
+        end
+        
+        %% Function:    getTilePosition
+        % Discription:  get tile position using number of rows and columns
+        function tilePos = getTilePosition(tileSetting)
+            % Note, tile position only support snake left-up pattern
+            % updated 03132021
+            % Input:    tileSetting, mat, one tiling patter per row
+            %           1st column, row #; 2nd column, col #
+            % Output:   tilePos, cell, one tiling pattern per cell
+            
+            tilePos = {};
+            for i = 1:size(tileSetting)
+                nRow = tileSetting(i,1);
+                nCol = tileSetting(i,2);
+                [nGrid,iTilePos] = indivTilePosition(nRow,nCol);
+                tilePos{nGrid} = iTilePos;
+            end
+            
+            % Function:    indivTilePosition ------------------------------
+            % Discription:  get individual tile position
+            function [nGrid,iTilePos] = indivTilePosition(nRow,nCol)
+                % Input:    nRow/nCol, num, row/column number for tiling
+                % Output:   nGrid, num, number of tile
+                %           iTilePos, mat
+                
+                nGrid = nRow*nCol; % Number of grid
+                
+                % Construct current tile positions (snake left-up pattern)
+                iTilePos = 1:nGrid;
+                iTilePos = reshape(iTilePos,nCol,nRow);
+                iTilePos = iTilePos';
+                iTilePos(1:2:end,:) = fliplr(iTilePos(1:2:end,:));
+                iTilePos = flipud(iTilePos);
+            end
+            
+        end
+                
         %% Function:    getChScore2Inten
         % Discription:  default chScore2Inten for 65A
         function chProfileSetting = getChScore2Inten(chProfileSetting)
@@ -1147,7 +1266,7 @@ classdef TBS % Terminal BARseq
         
     end
     
-    methods (Static)    % file, folder and general stuff ==================
+    methods (Static)    % File, folder and general BARseq function ========
         %% Function:    seqstr
         % Discription:  get string with sequencing prepend
         function seqStr = seqstr(num)
@@ -1158,7 +1277,8 @@ classdef TBS % Terminal BARseq
                 num = num2str(num,'%02d');
             end
             
-            seqStr = strcat('Seq',num);
+            sysSetting = TBS.getSysSetting;                        
+            seqStr = strcat(sysSetting.seqPrepend,num);
         end
         
         %% Function:    getFolderNumber
@@ -1182,6 +1302,7 @@ classdef TBS % Terminal BARseq
         %% Funciton:    getSeqCycles
         % Discription:  get sequencing cycle numbers
         function seqCycles = getSeqCycles(maxSeq,excludeSeq)
+            % NOte, assume the sequencing cycle start with 1
             seqCycles = 1:maxSeq;
             seqCycles(ismember(seqCycles,excludeSeq)) = [];
         end
@@ -1193,22 +1314,24 @@ classdef TBS % Terminal BARseq
             %           element, num/mat, element of the name to extract
             %           sysSetting, struct
             
-            name = strsplit(name,sysSetting.delimiter);
+            delimiter = sysSetting.delimiter;
+            
+            name = strsplit(name,delimiter);
             name = name(element);
             
             % Output as char if there is only one element
             if numel(element) == 1
                 name = name{:};
-            elseif numel(element) > 1
-                name = strjoin(name,sysSetting.delimiter);
+            else
+                name = strjoin(name,delimiter);
             end
         end
         
         %% Function:    rowName2ImName
         % Discription:  get the image name the tile belogns to
-        function imName = rowName2ImName(tbl,delimiter,sysSetting)
+        function imName = rowName2ImName(tbl,addDelimiter,sysSetting)
             % Input:   tbl, table
-            %          delimiter, logical, whether add delimiter to the
+            %          addDelimiter, logical, whether add delimiter to the
             %          end
             %          sysSetting,struct
             % Output:  imName, cell, image name the tile belongs to
@@ -1223,7 +1346,7 @@ classdef TBS % Terminal BARseq
                 imName,'UniformOutput',false);
             
             % Add delimiter to differenciate Vis vs VisContra
-            if delimiter
+            if addDelimiter
                 imName = cellfun(@(X) [X,sysSetting.delimiter],imName,...
                     'UniformOutput',false);
             end
@@ -1232,19 +1355,13 @@ classdef TBS % Terminal BARseq
         %% Function:    getTileNum
         % Discription:  Get tile number in the image name
         function tileNum = getTileNum(tileName,sysSetting)
-            % Input:    tileName, cell
-            
-            delimiter = sysSetting.delimiter;
-            tileElement = sysSetting.tileElement;
-            
-            if ischar(tileName) == 1
-                tileName = {tileName};
-            end
-            
-            tileNum = cellfun(@(X) strsplit(X,delimiter),tileName,'Uniformoutput',false);
-            tileNum = cellfun(@(X) X{tileElement},tileNum,'Uniformoutput',false);
-            tileNum = cellfun(@str2num,tileNum,'Uniformoutput',false);
-            tileNum = cell2mat(tileNum);
+            % 03062022, only accept string input
+            % Input:    tileName, str
+            %           sysSetting, struct
+            % Output:   tileNum, num
+                        
+            tileNum = TBS.nameFun(tileName,sysSetting.tileElement,sysSetting);
+            tileNum = str2double(tileNum);
         end
         
         %% Function:    getSeqNum
@@ -1253,12 +1370,12 @@ classdef TBS % Terminal BARseq
             % Input:    name, str
             %           sysSetting, sturct
             % Output:   seq, num, sequence number
+            
             seq = TBS.nameFun(name,sysSetting.seqElement,sysSetting);
             seq = erase(seq,sysSetting.seqPrepend);
             seq = str2double(seq);
         end
-       
-        
+               
         %% Function:    imFormat
         % Discription:  convert to image file name
         function imFormatName = imFormat(name,sysSetting)
@@ -1285,81 +1402,21 @@ classdef TBS % Terminal BARseq
             % Input:        tbl, table
             %               str, str needs to be added to the row names
             % Output:       tbl, table, with corrected row name
+            
             tableRowNames = tbl.Properties.RowNames;
             
-            noStr = ~contains(tableRowNames,str);
+            % Row doesnt have the name
+            TF = ~contains(tableRowNames,str);
             
-            tableRowNames(noStr) = cellfun(@(X) strcat(X,str),tableRowNames(noStr),'Uniformoutput',false);
+            if ~any(TF)
+                return
+            end
+            
+            tableRowNames(TF) = cellfun(@(X) [X,str],tableRowNames(TF),'Uniformoutput',false);
             
             tbl.Properties.RowNames = tableRowNames;
         end
-        
-        %% Function:    QCtform
-        % Discription:  quanlity check for tform using scale
-        function TF = QCtform(tform,tolerance)
-            % Input:    tform, mat, transformation matrix
-            %           tolerance,num, tolerance of error, <1
-            % Output:   TF, logical, whether it pass transformation matrix
-            
-            % Defualt tolerance
-            if nargin == 1
-                tolerance = 0.8;
-            end
-            
-            % 07032021: exclude reflection
-            if tform(1,1) < 0 && tform(2,2) < 0
-                TF = false; return
-            end
-            
-            % Check individual axis
-            scale = sum(abs(tform(1:2,1:2)),2);
-            % 1/toerance: > 1 (upper limit)
-            TF1 = all(scale >= tolerance & scale <= 1/tolerance);
-            
-            % Check area size (determinant)
-            % No reflection is allowed (no negative determinant)
-            area = det(tform(1:2,1:2));
-            TF2 = area >= tolerance & area <= 1/tolerance;
-            
-            TF = TF1 & TF2;
-        end
-        
-        %% Function:    getTilePosition
-        % Discription:  get tile position using number of rows and columns
-        function tilePos = getTilePosition(tileSetting)
-            % Note, tile position only support snake left-up pattern
-            % updated 03132021
-            % Input:    tileSetting, mat, one tiling patter per row
-            %           1st column, row #; 2nd column, col #
-            % Output:   tilePos, cell, one tiling pattern per cell
-            
-            tilePos = {};
-            for i = 1:size(tileSetting)
-                nRow = tileSetting(i,1);
-                nCol = tileSetting(i,2);
-                [nGrid,iTilePos] = indivTilePosition(nRow,nCol);
-                tilePos{nGrid} = iTilePos;
-            end
-            
-            % Function:    indivTilePosition ------------------------------
-            % Discription:  get individual tile position
-            function [nGrid,iTilePos] = indivTilePosition(nRow,nCol)
-                % Input:    nRow/nCol, num, row/column number for tiling
-                % Output:   nGrid, num, number of tile
-                %           iTilePos, mat
-                
-                nGrid = nRow*nCol; % Number of grid
-                
-                % Construct current tile positions (snake left-up pattern)
-                iTilePos = 1:nGrid;
-                iTilePos = reshape(iTilePos,nCol,nRow);
-                iTilePos = iTilePos';
-                iTilePos(1:2:end,:) = fliplr(iTilePos(1:2:end,:));
-                iTilePos = flipud(iTilePos);
-            end
-            
-        end
-        
+              
         %% Funciton:    estimateTotalNumOfTile
         % Discription:  get the estimated total tile number
         function totalTileNum = estimateTotalNumOfTile(tileNum,tilePos)
@@ -8480,7 +8537,32 @@ classdef TBS % Terminal BARseq
                 id = [id; [annoStruct.id]'];
             end
         end
-                       
+        
+        %% Function:    findAnnoStrID
+        % Discription:  find IDs of the region with the keywords
+        function id = findAnnoStrID(annoStruct,str)
+            % Input:    annoStruct, sturct, of annotation
+            %           str, string, key work of annotation name
+            % Output:   id, vector, id of the area with the key words
+            
+            list = [];
+            while 1 > 0
+                annoStruct = vertcat(annoStruct.children);
+                if isempty(annoStruct)
+                    break
+                end
+                
+                list{end+1,1} = annoStruct;
+            end
+            
+            list = vertcat(list{:});
+            
+            % Find region name contains the string
+            TF = cellfun(@(X) contains(X,str,'IgnoreCase',true),{list.name});
+            % Get the id of these regions
+            id = [list(TF).id]';
+        end
+        
         %% Function:    getAnnoRegionFlat ????????????????????????? used?
         % Discription:  get annotated region in flat map
         function annoRegionFlat = getAnnoRegionFlat(refSetting,ctxML,...
@@ -8524,18 +8606,6 @@ classdef TBS % Terminal BARseq
             TF = false(size(im));
             TF(:,1:round(size(im,2)/2),:) = true;
         end
-        
-        %% Function:    regVoxelTF
-        % Discription:  whether the coordinates are within the region
-        function TF = regVoxelTF(xyz,regionVoxel)
-            % Input:    xyz, mat, coordinates
-            %           regionVoxel, logical stack, region areas
-            % Output:   TF, logical, whether the coordinates are within the region
-                                   
-            xyz = round(xyz);
-            ind = sub2ind(size(regionVoxel),xyz(:,2),xyz(:,1),xyz(:,3));
-            TF = regionVoxel(ind);            
-        end
                        
     end
     
@@ -8557,6 +8627,7 @@ classdef TBS % Terminal BARseq
             S(2,2) = 1/resolution;
             S(3,3) = S(3,3).*slideThickness;
             
+            % 03072022, not sure why there are two translation...?
             % Translation1: - 1
             T1 = eye(4);
             T1(4,1:3) = -1;
@@ -8655,7 +8726,7 @@ classdef TBS % Terminal BARseq
             end
         end
         
-         %% Function:    totalDist
+         %% Function:   totalDist
         % Discription:  total distance of the coordinates
         function dist = totalDist(xyz)
             % Input:    xyz, mat
@@ -8847,8 +8918,7 @@ classdef TBS % Terminal BARseq
                 % Slide with dispalcement field
                 Z(end+1) = i;
             end
-            
-            
+                        
             % Interpolation of dispalcement field between first and last --
             Z2 = Z(1):Z(end);
             
@@ -8874,369 +8944,282 @@ classdef TBS % Terminal BARseq
         
     end
     
-    methods (Static)    % Construct flatmap ===============================
-        %% Function:    getCtxDepth
-        % Discription:  compute cortical depth
-        function ctxDepth = getCtxDepth(pia,depthStep,refScale,fuseSection)
-            % Input:    pia, logical stack, 
-            %           depthStep, number, depth per layer
-            %           refScale, scale for reference, pixel/micron
-            %           fuseSection, logical stack, seciton with no
-            %           internal gap
-            % Output:   ctxDepth, mat, with cortical depth value
+    methods (Static)    % Construct flatmap, 03/2022 ======================
+        %% Function:    interp1TwoDot
+        % Discription:  interpolate point between two dots
+        function xyzCell = interp1TwoDot(xyz1,xyz2,x,xq)
+            % Input:    xyz1/2, mat, xyz coordinates of the begining/end
+            % dot
+            %           x, vector, sample points
+            %           xq, vector, query points
+            % Outut:    xyzCell, cell, coordinates for the qeury dots
+            % between begining & end
             
-            disp('Function getCtxDepth on progress...');
-            
-            ctxDepth = zeros(size(pia));
-            ctxDepth = single(ctxDepth);
-            
-            % Get layers of cortex depth using dilation
-            for i = depthStep:depthStep:1400
-                
-                % Dilation width in pixel
-                SE = i*refScale;
-                SE = round(SE);
-                SE = strel('sphere',SE);
-                
-                ictx = imdilate(pia,SE);
-                
-                % Delete area already exist
-                ictx(ctxDepth>0) = false;
-                % Bug fix 09292021: need to minus half step size to get
-                % cortical depth
-                ictx = ictx.*(i-depthStep/2);
-                
-                % Combine with current image
-                ctxDepth = max(ctxDepth,ictx);
-                
-                disp(['Dilation: ',num2str(i)]);
+            if numel(x)~=2
+                error('Two sample points for interp1.');
             end
             
-            % Add the deepest using seciton area, faster
-            % Also filled the section area, otherwise average filter will
-            % have issue in the bottom end
-            % Delete area already exist
-            ictx = fuseSection;
-            ictx(ctxDepth>0)=false;
-            
-            % Combine with current image
-            ictx = ictx.*(i+depthStep);
-            ctxDepth = max(ctxDepth,ictx);
-            
-            % Delete before the filter so the outside can be 0
-            ctxDepth(~fuseSection) = 0;      
-        end
-                
-        %% Function:    depthRefPoints
-        % Discription:  find reference points in upper/deeper layers
-        function [XYZ,ind] = depthRefPoints(refPlate,refDpethRng,...
-                ctxDepth,refScale,fuseCtx)
-            % Note, find 3-points along depth to define a cortical column
-            %       use determinant for linearity
-            % Input:    refPlate, mat, reference line
-            %           refDpethRng, vector, range of reference point depth
-            %           ctxDepth, mat, image of cortical depth, of fuse
-            %           brain
-            %           refScale, scale for reference, pixel/micron
-            %           fuseCtx, mat, cortex with no gap between
-            %           hepmisphere, for ML-axis computation
-            % Output:   XYZ, mat, one row/column; col, xyz; one stack per
-            % depth
-            %           ind, vector, index cooresponding reference voxel in
-            %           refPlate
-            
-            disp('Function depthRefPoints on progress...');
-            
-            % Pixel around min & max reference depth (~2-pixel width)
-            refDepthMin = ctxDepth < min(refDpethRng)+1/refScale &...
-                ctxDepth > min(refDpethRng)-1/refScale;
-            refDepthMin = refDepthMin & fuseCtx;
-            refDepthMax = ctxDepth > max(refDpethRng)-1/refScale &...
-                ctxDepth < max(refDpethRng)+1/refScale;
-            refDepthMax = refDepthMax & fuseCtx;
-            
-            % Coordinates of reference dots
-            [Y,X,Z,~] = TBS.find3(refPlate);
-            XYZ = [X,Y,Z];
-            ind = find(refPlate);
-            
-            [Y,X,Z,~] = TBS.find3(refDepthMin);
-            XYZmin = [X,Y,Z];
-            
-            [Y,X,Z,~] = TBS.find3(refDepthMax);
-            XYZmax = [X,Y,Z];
-            
-            % Find the min & max reference points for each mid-ref point --
-            [~,I] = pdist2(XYZmin,XYZ,'euclidean','Smallest',1);
-            XYZmin = XYZmin(I',:);
-            
-            [~,I] = pdist2(XYZmax,XYZ,'euclidean','Smallest',1);
-            XYZmax = XYZmax(I',:);
-            
-            % Check whether the 3-points are on a line using determinant --
-            TF = [];
-            for i = 1:size(XYZ,1)
-                ixyz = [XYZmin(i,:); XYZ(i,:); XYZmax(i,:)];
-                ixyz = ixyz';
-                
-                TF(i,1) = det(ixyz);
-            end
-            % Current determinant threshold: 0.001
-            % Bug fix 09292021, abs of det, determinat can be negaTive
-            TF = abs(TF) < 1;
-            
-            % Points belongs to the same cortical column, one row per
-            % column; in ascending order
-            XYZ = cat(3,XYZmin,XYZ,XYZmax);
-            XYZ = XYZ(TF,:,:);
-            ind = ind(TF);            
-        end
-        
-        %% Function:    interpDepthRefPoints
-        % Discription:  interpolate ML reference points get a reference line
-        function refPoint = interpDepthRefPoints(XYZ,ind,refDpethRng,refScale)
-            % Input:    XYZ, mat, one row/column; col, xyz; one stack per
-            % depth
-            %           ind, vector, index of cooresponding reference voxel
-            %           refDpethRng, vector, range of reference point depth
-            %           refScale, scale for reference, pixel/micron
-            % Output:   refPoint, cell, xyz corrdinates & index (index for
-            % reference voxel)
-            
-            % Range of cortical depth
-            Xq = -100:1500;
-            
-            % Interpolation the reference point into lines
-            refPoint = {};
-            for i = 1:size(XYZ,1)
-                ixyz = XYZ(i,:,:);
-                ixyz = squeeze(ixyz)';
-                
-                % Distance between dots along cortical depth
-                % 1st to 2nd point, 1st to 3rd point
-                D = [pdist2(ixyz(1,:),ixyz(2,:)),pdist2(ixyz(1,:),ixyz(3,:))];
-                D = D./refScale;
-                D = [0,D];
-                % Normalize to the median reference range
-                D = D-D(2)+ median(refDpethRng);
-                
-                % Delete the nonspecific points, not totally within the
-                % range
-                if D(1) < min(Xq) || D(end) > max(Xq)
-                    continue
+            xyzCell = {};
+            for i = 1:size(xyz1,1)
+                                                               
+                % Loop throught each axis
+                ixyz = [];
+                for j = 1:size(xyz1,2)
+                    jAx = interp1(x,[xyz1(i,j),xyz2(i,j)],xq,'spline');
+                    ixyz(:,j) = jAx';
                 end
                 
-                % Interpolate the line from reference points --------------
-                ixyz2 = [];
-                for j = 1:size(ixyz,2)
-                    ixyz2(:,j) = interp1(D,ixyz(:,j)',Xq,'spline');
-                end
-                % Get unique pixel
-                ixyz2 = round(ixyz2);
-                % Bug fix 09292021: need to have same sequence (stable)
-                ixyz2 = unique(ixyz2,'rows','stable');
-                
-                iInd = repmat(ind(i),size(ixyz2,1),1);
-                
-                refPoint{i,1} = [ixyz2,iInd];
-            end
-            
-            TF = cellfun(@isempty,refPoint);
-            refPoint = refPoint(~TF,:);
-        end
-        
-        %% Function:    exclNonspecificRefPoint
-        % Discription:  exclude nonspecific reference point
-        function refPoint = exclNonspecificRefPoint(refPoint,ctxDepth)
-            % Input:    refPoint, cell, reference points, one cell per
-            % reference line
-            %           ctxDepth, mat, image with cortical depth
-            
-            imSz = size(ctxDepth);
-            
-            sz = cellfun(@(X) size(X,1),refPoint);            
-            refPoint2 = vertcat(refPoint{:});
-            
-            % Exclude coordinates outside the image
-            TF = TBS.isOutOfRngeDot(imSz,refPoint2(:,1:3));
-            
-            % Get cortical depth for each reference point
-            idx = refPoint2(:,end);
-            depth = ctxDepth(idx);
-            
-            depth2 = zeros(size(TF));
-            depth2(~TF) = depth;
-            
-            depth2 = mat2cell(depth2,sz);
-            
-            % Exclude points outside cortex -------------------------------
-            refPoint = cellfun(@(X,Y) X(Y>0,:),refPoint,depth2,...
-                'UniformOutput',false);
-            depth2 = cellfun(@(X) X(X>0,:),depth2,'UniformOutput',false);
-            
-            % The depth need to be all-ascending sequence -----------------
-            TF = cellfun(@(X) diff(X)<0,depth2,'UniformOutput',false);
-            TF = cellfun(@any,TF);
-            
-            refPoint = refPoint(~TF);
+                xyzCell{i,1} = ixyz;
+            end            
         end
                 
-        %% Function:    getMLrefLine
-        function refML = getMLrefLine(refML,midline,refScale)
-            % Input:    refML, logical, voxel for ML reference line
-            %           midline, logical voxel for midline
-            %           refScale, scale for reference, pixel/micron
-            % Output:   refML, mat, reference line with ML-value
-            
-            disp('Function getMLrefLine on progress...');
-            
-            % Step for each dilution (1 pixel at a time)
-            SE = strel('sphere',1);
-            
-            % Starting point: midline; use 1 but not 0
-            refML2 = refML & midline;
-            refML2 = single(refML2);
-            
-            checkTF = 0;
-            while max(refML2,[],'all') ~= checkTF
-                
-                checkTF = max(refML2,[],'all');
-                
-                % Find a pixel further
-                im = imdilate(refML2,SE);
-                I = im > 0;
-                % Add a pixel distance
-                im(I) = im(I) + (1/refScale);
-                
-                % Only include pxiel haven't counted
-                im(refML2 | ~refML)=0;
-                
-                % Combine with existent ML-value
-                refML2 = max(refML2,im);
-                
-                disp(['Got ML-reference line: ',num2str(max(refML2,[],'all'))]);
-            end
-            
-            refML = refML2;
-        end        
-        
         %% Function:    fillRefCtx
-        % Discription:  fill the gap between ML-reference points, avg
-        % filter
-        function ctxML = fillRefCtx(refPoint,refLine,ctx)
-            % Input:    refPoint, mat, xyz & v (ML-value) for reference
-            % points
-            %           refML, mat, ML-reference line
-            %           ctx, mat, logical image of cortex
-            % Output:   ctxML, mat, image of ML value in cortex, bigger
-            % than cortex area (for filtering)
+        % Discription:  fill the empty space between reference values
+        function refCtx = fillRefCtx(refCtx,ctx)
+            % Note, use 7 pixel ball
+            % Input & output: reference cortex, mat
+            %           ctx, logical stack, cortical area
             
-            disp('Function fillRefCtx on progress...');
-            
-            % Get image from the coordinates
-            ctxML = TBS.xyzv2im(size(ctx),refPoint(:,1:3),refPoint(:,4));
-            
-            % Also add the reference line
-            if ~isempty(refLine)
-                ctxML(refLine > 0)=0;                
-                ctxML = max(ctxML,refLine);
-            end
-            
-            TF = isnan(ctxML);
-            ctxML(TF) = 0;
+            disp('Function fillRefCtx in progress...')
             
             % Step per filling
             SE = strel('sphere',3);
             SE = SE.Neighborhood;
             
-            checkTF = sum(~ctxML & ctx,'all');
+            checkTF = inf;
             while checkTF > 0
-                                
-                % Average of neigboring nonzero pixels
-                im = convn(ctxML,SE,'same');
-                n = convn(single(ctxML>0),SE,'same');
-                im = im./n;
+                
+                im = TBS.nonzeroAvgFilter(refCtx,SE);
                 
                 % Only include the empty area
-                im(ctxML>0 | ~ctx) = 0;
+                TF = ctx & ~refCtx;
                 
-                ctxML = max(ctxML,im);
+                refCtx(TF) = im(TF);
                 
-                if checkTF == sum(~ctxML & ctx,'all')
+                % Remaining voxel
+                n = sum(~refCtx & ctx,'all');
+                
+                if checkTF == n
                     return
                 end
                 
-                checkTF = sum(~ctxML & ctx,'all');
+                checkTF = n;
                 
-                disp(['Filled pixel: ',num2str(sum(ctxML >1,'all'))]);
+                disp(['Remaining voxel to fill: ',num2str(n)]);
             end
         end
         
-        %% Function:    getAPrefPlate
-        % Discription:  get reference plate for AP-axis
-        function refAP = getAPrefPlate(refPlate,midline,refScale)
-            % Input:    refPlate, logical, plate in reference depth
-            %           midline, logical, use midline to count reference
-            %           AP-value
-            %           refScale, scale for reference, pixel/micron
-            % Output:   refAP, stack, reference plate for AP-axis
+        %% Function:    nonzeroAvgFiltCtx
+        % Discription:  apply average filter on nonzero value to each side
+        % of the cortex seperately
+        function im = nonzeroAvgFiltCtx(im,h,midLineCol)
+            % Note, because the fold in regions are connected, so average
+            % filter need to be done seperately
+            % Assumption: the midline is in the middle pixel 
+            % Input & output:   im, mat, cortical value to be filtered
+            %           h, logical mat, filter
+            %           midLineCol, vector, column location for midline
             
-            % Use midline as reference line
-            TF = refPlate & midline;
-            [Y,X,Z,~] = TBS.find3(TF);
+            % Midline to split both hemisphere
+            sz = size(im);
             
-            % Find the median pixel for every stack
-            [Z,~,ic] = unique(Z);
-            X = accumarray(ic,X,[],@median);
-            Y = accumarray(ic,Y,[],@median);
-            XYZ = [X Y Z];
-            
-            % Sort from anterior to posterior
-            XYZ = sortrows(XYZ,3);
-            
-            % Calculate disatance of neigboring dots along AP
-            D = sqrt(sum(diff(XYZ,1).^2,2));
-            D = [0;D];
-            
-            % AP-value
-            D = cumsum(D);
-            
-            % Change to micron
-            D = D./refScale;
-            
-            % Set initial point to 1
-            D = D + 1;
-            
-            % Get refAP line ----------------------------------------------
-            refAP = TBS.xyzv2im(size(refPlate),XYZ,D);
-            
-            % Step size
-            SE = strel('sphere',1);
-            SE = SE.Neighborhood;
-            
-            fh = @(X) sum(X > 0,'all');
-            
-            checkTF = 0;
-            while fh(refAP) ~= checkTF
+            for j = 1:2
                 
-                checkTF = fh(refAP);
+                if j == 1
+                    col = 1:midLineCol(1);
+                elseif j == 2
+                    col = midLineCol(1)+1:sz(2);
+                end
                 
-                % Fill neigboring pixel using average
-                im = convn(refAP,SE,'same');
-                n =  convn(single(refAP > 0),SE,'same');
-                im = im./n;
+                jIm = im(:,col,:);
                 
-                % Only include pxiel haven't counted
-                im(refAP | ~refPlate)=0;
+                jIm = TBS.nonzeroAvgFilter(jIm,h);
                 
-                % Combine with existent ML-value
-                refAP = max(refAP,im);
+                im(:,col,:) = jIm;
+            end            
+        end
+       
+        %% Function:    getRefPlateContour
+        % Discription:  Calculate distance along contour on reference plate
+        function xyz = getRefPlateContour(xyzInital,xyzRest,refScale)
+            % Input:    xyzInital, mat, initial dots coordinates, ML 
+            %           xyzRest, mat, dots to be assigned AP-vlaue
+            % Output:   xyz, mat, dots with AP-value
+            
+            disp('Function getRefPlateContour on progress...');
+            
+            % Set reference point value to 0 (5th column)
+            xyzInital(:,end+1) = 0;
+            xyz = {xyzInital};
+            
+            ixyz = xyz{end};
+            while ~isempty(xyzRest) && ~isempty(ixyz)
+                % Assigned dots in the previous cycle
+                ixyz = xyz{end};
                 
-                disp(['Got AP-reference line: ',num2str(fh(refAP))]);
+                % Find the closest alligned dot, within 2-voxel distance
+                [D,I] = pdist2(ixyz(:,1:3),xyzRest(:,1:3),'euclidean','Smallest',5);
+                TF = D < 2;
+                
+                if size(ixyz,2) > 4
+                    % Find the reference dot (close range) with closest ML-value
+                    v = ixyz(:,4);
+                    v = v(I);
+                    v(~TF) = nan;
+                    v = abs(v - xyzRest(:,4)');
+                    TF = v == min(v,[],1,'omitnan');
+                end
+                
+                % If there is multiple hit, find the one with shortest distance
+                D(~TF) = nan;
+                TF = D == min(D,[],1,'omitnan');
+                
+                % I, index in ixyz; col, index in xyzRest
+                I(~TF) = 0;
+                [~, col,I] = find(I);
+                
+                % Distance in micron
+                D = ixyz(I,1:3)- xyzRest(col,1:3);
+                D = sqrt(sum(D.^2,2));
+                D = D./refScale;
+                
+                % Add distance to the reference dot
+                D = D + ixyz(I,end);
+                
+                % Take mean distance if there is multiple dot
+                [col,~,ic] = unique(col);
+                D = TBS.accumarrayMean(ic,D);
+                
+                xyz{end+1} = [xyzRest(col,:),D];
+                
+                % Delete the assigned dots
+                xyzRest(col,:) = [];
             end
-        end            
-        
+            
+            xyz = vertcat(xyz{:});
+        end
+                                    
+        %% Function:    refPlate2Column
+        % Discription:  Assign colum with reference value
+        function refPlate = refPlate2Column(refPlate,xyz)
+            % Input:    refPlate, mat, volumn with reference value
+            %           xyz, cell, coordinates of cortical colume
+            % Output:   mat, volume with value assigned to colume
+            
+            disp('Function refPlate2Column on progress...');
+            
+            % Get reference value
+            % (Flat to mat for speed)
+            sz = cellfun(@(X) size(X,1),xyz);
+            v = vertcat(xyz{:});
+            v = TBS.xyz2v(v,refPlate);
+            v = mat2cell(v,sz,1);
+            % Mean of all the non-zero value
+            v = cellfun(@(X) mean(nonzeros(X)),v);
+            
+            % Delete column with no reference value
+            TF = ~isnan(v);
+            xyz = xyz(TF);
+            v = v(TF);
+            
+            % Assign to all the voxel of the column
+            v = TBS.repmat2cell(v,xyz);
+            
+            xyz = vertcat(xyz{:});
+            v = vertcat(v{:});
+            
+            % Get the mean if multiple value assign to a voxel
+            [xyz,~,ic] = unique(xyz,'rows');
+            % (this is faster than doing accumarry & @mean)     
+            
+            % Mean value for each xyz
+            v = TBS.accumarrayMean(ic,v);
+            
+            refPlate = TBS.xyzv2im(size(refPlate),xyz,v);
+        end
+                
+        %% Function:    refAPfromML
+        % Discription:  get refAP perpendicular to ML-contour
+        function refAP = refAPfromML(refML,refScale)
+            % Note, only regonize one inital dots per z, need to do both
+            % hempshpere seperately
+            % Input:    refML, reference plate of ML-value
+            %           refScale, num, scale factor for reference map
+            % Output:   refAP, reference plate of AP-value
+            
+            disp('Function refAPfromML on progress...');
+            
+            [y, x, z, v] = TBS.find3(refML);
+            xyz = [x y z v];
+            
+            % Use midline to define the AP-value --------------------------
+            TF = xyz(:,4) == 1;
+            refAP = xyz(TF,:);
+            xyz = xyz(~TF,:);
+            
+            % Calculate AP-value
+            % Sort using y-axis, to choose the top dot
+            refAP = sortrows(refAP,2,'ascend');
+            [~,ia,~] = unique(refAP(:,3));
+            % One point per z
+            refAP = refAP(ia,:);
+            
+            % Use distance to define AP-value
+            refAP = sortrows(refAP,3,'ascend');
+            D = sqrt(sum(diff(refAP(:,1:3),1).^2,2));
+            D = [0; D];
+            D = D./refScale;
+            D = cumsum(D);
+            % Minimum value as 1
+            D = D + 1;
+            refAP = [refAP,D];
+            
+            % Binning along ML-value: 2-voxel -----------------------------
+            v = xyz(:,end);
+            v2 = round(v.*(refScale/2));
+            [v2,~,ic] = unique(v2);
+            
+            % ML-grid interval
+            interval = 4;
+            
+            % Get perpendicular line(closest value) across bins
+            % Do bins with inerval, do for every bin
+            refAP = {refAP};
+            for j = 1:interval
+                refAP{end+1,1} = refAP{1};
+                
+                for i = j:interval:numel(v2)
+                    % Previous bin
+                    ixyz = refAP{end};
+                    
+                    % Current bin
+                    TF = ic == i;
+                    
+                    % The dots in last bin closest to this dot (get the closest 10)
+                    [D,I] = pdist2(ixyz(:,1:3),xyz(TF,1:3),'euclidean','Smallest',10);
+                    TF2 = D == min(D);
+                    % Take mean if there is multiple closest dots
+                    v = ixyz(:,end);
+                    v = v(I);
+                    v(~TF2) = nan;
+                    v = mean(v,1,'omitnan');
+                    
+                    refAP{end+1,1} = [xyz(TF,:),v'];
+                end
+            end
+            
+            refAP = vertcat(refAP{:});
+            
+            % If there is repeated value, take median
+            [refAP2,~,ic] = unique(refAP(:,1:3),'rows');
+            refAP2(:,end+1) = TBS.accumarrayMean(ic,refAP(:,end));
+            
+            refAP = TBS.xyzv2im(size(refML),refAP2(:,1:3),refAP2(:,end));
+        end
+                        
     end
+    
+    
     
     methods (Static)    % Data processing using flatmap ===================
         %% Function:    stack2flatmapIm
@@ -9371,9 +9354,8 @@ classdef TBS % Terminal BARseq
                 SE = SE.Neighborhood;
                 
                 TFv = ctxV == 0;
-                % nonzeroAvgFilter(im,h,exclude0)
-                % exclude0: whether set the 0-pixel to 0 in output
-                ctxV2 = TBS.nonzeroAvgFilter(ctxV,SE,false);
+                % nonzeroAvgFilter(im,h)
+                ctxV2 = TBS.nonzeroAvgFilter(ctxV,SE);
                 ctxV(TFv) = ctxV2(TFv);
             end
         end
@@ -9827,8 +9809,7 @@ classdef TBS % Terminal BARseq
                                                
             % Get CF cells ================================================
             % Dots within brain regions
-            % regVoxelTF(xyzDot,CFvoxel);
-            fh = @(Y) cellfun(@(X) TBS.regVoxelTF(X,Y),xyzDot,'UniformOutput',false);
+            fh = @(Y) cellfun(@(X) TBS.xyz2v(X,Y),xyzDot,'UniformOutput',false);
             inThal = fh(thalReg);
             inStr = fh(strReg);
             inMb = fh(mbReg);
@@ -10218,5 +10199,3 @@ classdef TBS % Terminal BARseq
     end
     
 end
-
-
