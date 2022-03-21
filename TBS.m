@@ -9047,19 +9047,18 @@ classdef TBS % Terminal BARseq
             % Output:   xyz, mat, dots with AP-value
             
             disp('Function getRefPlateContour on progress...');
-            
+                       
             % Set reference point value to 0 (5th column)
             xyzInital(:,end+1) = 0;
             xyz = {xyzInital};
             
-            ixyz = xyz{end};
+            ixyz = xyz{end}; 
             while ~isempty(xyzRest) && ~isempty(ixyz)
-                % Assigned dots in the previous cycle
                 ixyz = xyz{end};
                 
                 % Find the closest alligned dot, within 2-voxel distance
                 [D,I] = pdist2(ixyz(:,1:3),xyzRest(:,1:3),'euclidean','Smallest',5);
-                TF = D < 2;
+                TF = D <= 2;
                 
                 if size(ixyz,2) > 4
                     % Find the reference dot (close range) with closest ML-value
@@ -9089,7 +9088,7 @@ classdef TBS % Terminal BARseq
                 % Take mean distance if there is multiple dot
                 [col,~,ic] = unique(col);
                 D = TBS.accumarrayMean(ic,D);
-                
+                                
                 xyz{end+1} = [xyzRest(col,:),D];
                 
                 % Delete the assigned dots
@@ -9137,86 +9136,7 @@ classdef TBS % Terminal BARseq
             
             refPlate = TBS.xyzv2im(size(refPlate),xyz,v);
         end
-                
-        %% Function:    refAPfromML
-        % Discription:  get refAP perpendicular to ML-contour
-        function refAP = refAPfromML(refML,refScale)
-            % Note, only regonize one inital dots per z, need to do both
-            % hempshpere seperately
-            % Input:    refML, reference plate of ML-value
-            %           refScale, num, scale factor for reference map
-            % Output:   refAP, reference plate of AP-value
-            
-            disp('Function refAPfromML on progress...');
-            
-            [y, x, z, v] = TBS.find3(refML);
-            xyz = [x y z v];
-            
-            % Use midline to define the AP-value --------------------------
-            TF = xyz(:,4) == 1;
-            refAP = xyz(TF,:);
-            xyz = xyz(~TF,:);
-            
-            % Calculate AP-value
-            % Sort using y-axis, to choose the top dot
-            refAP = sortrows(refAP,2,'ascend');
-            [~,ia,~] = unique(refAP(:,3));
-            % One point per z
-            refAP = refAP(ia,:);
-            
-            % Use distance to define AP-value
-            refAP = sortrows(refAP,3,'ascend');
-            D = sqrt(sum(diff(refAP(:,1:3),1).^2,2));
-            D = [0; D];
-            D = D./refScale;
-            D = cumsum(D);
-            % Minimum value as 1
-            D = D + 1;
-            refAP = [refAP,D];
-            
-            % Binning along ML-value: 2-voxel -----------------------------
-            v = xyz(:,end);
-            v2 = round(v.*(refScale/2));
-            [v2,~,ic] = unique(v2);
-            
-            % ML-grid interval
-            interval = 4;
-            
-            % Get perpendicular line(closest value) across bins
-            % Do bins with inerval, do for every bin
-            refAP = {refAP};
-            for j = 1:interval
-                refAP{end+1,1} = refAP{1};
-                
-                for i = j:interval:numel(v2)
-                    % Previous bin
-                    ixyz = refAP{end};
-                    
-                    % Current bin
-                    TF = ic == i;
-                    
-                    % The dots in last bin closest to this dot (get the closest 10)
-                    [D,I] = pdist2(ixyz(:,1:3),xyz(TF,1:3),'euclidean','Smallest',10);
-                    TF2 = D == min(D);
-                    % Take mean if there is multiple closest dots
-                    v = ixyz(:,end);
-                    v = v(I);
-                    v(~TF2) = nan;
-                    v = mean(v,1,'omitnan');
-                    
-                    refAP{end+1,1} = [xyz(TF,:),v'];
-                end
-            end
-            
-            refAP = vertcat(refAP{:});
-            
-            % If there is repeated value, take median
-            [refAP2,~,ic] = unique(refAP(:,1:3),'rows');
-            refAP2(:,end+1) = TBS.accumarrayMean(ic,refAP(:,end));
-            
-            refAP = TBS.xyzv2im(size(refML),refAP2(:,1:3),refAP2(:,end));
-        end
-                        
+                                     
     end
     
     
