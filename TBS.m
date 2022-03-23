@@ -23,7 +23,7 @@ classdef TBS % Terminal BARseq
             %               ws, workspace, caller/base
             % Output:       S, struct
             
-            if iscell(varName) == 0
+            if ~iscell(varName)
                 error('Function var2struct: input varName is not cell array')
             end
             
@@ -40,13 +40,13 @@ classdef TBS % Terminal BARseq
             % Output:       stack, M*N*O matrix
             
             % This will have error for large tif file
-            if isempty(stackNumber)
+            if nargin == 1 || isempty(stackNumber)
                 info = imfinfo(fileName);
                 stackNumber = 1:size(info,1);
             end
             
-            for iStack = 1:length(stackNumber)
-                stack(:,:,iStack)=imread(fileName,stackNumber(iStack));
+            for i = 1:length(stackNumber)
+                stack(:,:,i) = imread(fileName,stackNumber(i));
             end
         end
         
@@ -136,7 +136,8 @@ classdef TBS % Terminal BARseq
         % Discription: change cell with sparse matrix per cell to mat
         function stack = spCell2stack(sparseCell)
             % Input:    sparseCell,cell array with sparse mat
-            % Output:   matrix
+            % Output:   stack, mat
+            
             sparseCell = cellfun(@full,sparseCell,'Uniformoutput',false);
             stack = cell2mat(sparseCell);
         end
@@ -395,7 +396,7 @@ classdef TBS % Terminal BARseq
         end
         
         %% Function:    xyz2v
-        % Discription:  get the value
+        % Discription:  get the value in im
         function v = xyz2v(xyz,im)
             % Input:    xyz, mat, coordinates
             %           im, 3-D or 2-D mat
@@ -474,7 +475,7 @@ classdef TBS % Terminal BARseq
         end
         
         %% Function:    getOutline
-        % Discription:  get outline of the stack
+        % Discription:  get outline of the stack, disk SE
         function outlineStack = getOutline(stack,width)
             SE = strel('disk',width);
             
@@ -488,6 +489,7 @@ classdef TBS % Terminal BARseq
         end
         
         %% Function:    imfillHoles3
+        % Discription:  fill holes in stacks of images
         function im = imfillHoles3(im)
             % Input/output: im, image stacks
             for z = 1:size(im,3)
@@ -6832,6 +6834,7 @@ classdef TBS % Terminal BARseq
             y = cellfun(@(X) median(X,2),y,'Uniformoutput',false);
             
             % volume use section number as z
+            % (sz will be used for mat2cell later)
             sz = cellfun(@(X) size(X,1),x);
             z = arrayfun(@(X,Y) repmat(X,Y,1),sectionNumber,sz,'UniformOutput',false);
             
@@ -7510,11 +7513,13 @@ classdef TBS % Terminal BARseq
         end
         
         %% Function:    getSomaBCim
-        % Discription:  get soma image finding soma location
+        % Discription:  get soma image finding soma location, with birghtes
+        % pixel intensity
         function somaBCim = getSomaBCim(somaImName,nCh,directory)
             % Input:    somaImName, cell, name of soma image
             %           imageSetting, struct,
-            % Output:   somaBCim, table, image of median intensity of bscalled channels
+            % Output:   somaBCim, table, image of median of max intensity
+            % across cycles
             
             disp('Function getSomaBCim on progress...');
             
@@ -7547,7 +7552,8 @@ classdef TBS % Terminal BARseq
         function somaSectionNum = getSomaSection(somaBC,somaIm,imageSetting,sysSetting)
             % Note: 08112021, use soma image
             % Input:    somaBC, table, soma pixel coordinates and BCid
-            %           somaIm, table, soma image
+            %           somaIm, table, image of median of max intensity
+            % across cycles
             %           imageSetting/sysSetting, struct
             % Output:   somaLoc, mat, soma coordinates in micron, one BC per row
             
@@ -7651,7 +7657,8 @@ classdef TBS % Terminal BARseq
             % Input:    minCount, num, min BC count within the radius
             %           somaR, num, soma radius (from the center)
             %           somaBC, table
-            %           somaIm, table, soma image
+            %           somaIm, table, image of median of max intensity
+            % across cycles
             %           imageSetting/sysSetting, sturct
             % Output:   TF, logical, whether the BC has enough pixel count
             % within the selective radius
@@ -8109,7 +8116,6 @@ classdef TBS % Terminal BARseq
                 end
                 
                 ixyz = xyz(row,:);
-                iCenter = median(ixyz,1);
                 
                 axonBCcenter(i,:) = median(ixyz,1);
                 
@@ -8281,6 +8287,31 @@ classdef TBS % Terminal BARseq
                 'RowNames',BCtable.Properties.RowNames);
         end
         
+         %% Function:   exclFloatingUseROI
+        % Discription:  exclude floating rolony using BC identified by ROI,
+        % delete all rolony on the seciton
+        function BCtable = exclFloatingUseROI(BCtable,roiBC)
+            % Input & output: BCtable, table, with barcode coordinates
+            %           roiBC, table, with barcode id for each image
+            
+            TF2 = {};
+            for i = 1:size(roiBC,1)
+                imName = roiBC.Properties.RowNames{i};
+                
+                % rows doesnt belong to BC in ROI
+                TF = ~ismember(BCtable.codeID{imName},roiBC.codeID{imName});
+                
+                BCtable{imName,:} = cellfun(@(X) X(TF,:),...
+                    BCtable{imName,:},'UniformOutput',false);
+                
+                TF2{i,1} = TF;
+            end
+            
+            TF = vertcat(TF2{:});
+            disp(['After exclude flaoting rolony using ROI: ',...
+                num2str(sum(TF)),' of total ',num2str(numel(TF))]);
+        end
+        
         %% Function:    exclSporadicBC
         % Discription:  exclude sporadic BC in different regions
         function axonBC = exclSporadicBC(axonBC,regVoxel,regionMinCount)
@@ -8335,31 +8366,6 @@ classdef TBS % Terminal BARseq
                     'UniformOutput',false);
             end
             
-        end
-        
-        %% Function:    exclFloatingUseROI
-        % Discription:  exclude floating rolony using BC identified by ROI,
-        % delete all rolony on the seciton
-        function BCtable = exclFloatingUseROI(BCtable,roiBC)
-            % Input & output: BCtable, table, with barcode coordinates
-            %           roiBC, table, with barcode id for each image
-            
-            TF2 = {};
-            for i = 1:size(roiBC,1)
-                imName = roiBC.Properties.RowNames{i};
-                
-                % rows doesnt belong to BC in ROI
-                TF = ~ismember(BCtable.codeID{imName},roiBC.codeID{imName});
-                
-                BCtable{imName,:} = cellfun(@(X) X(TF,:),...
-                    BCtable{imName,:},'UniformOutput',false);
-                
-                TF2{i,1} = TF;
-            end
-            
-            TF = vertcat(TF2{:});
-            disp(['After exclude flaoting rolony using ROI: ',...
-                num2str(sum(TF)),' of total ',num2str(numel(TF))]);
         end
         
         %% Function:    imBCid (for validation)
@@ -8563,40 +8569,6 @@ classdef TBS % Terminal BARseq
             id = [list(TF).id]';
         end
         
-        %% Function:    getAnnoRegionFlat ????????????????????????? used?
-        % Discription:  get annotated region in flat map
-        function annoRegionFlat = getAnnoRegionFlat(refSetting,ctxML,...
-                ctxAP,ctxDepthPrctile)
-            % Note: it need to fill some empty pixels before project into
-            % flatmap; to ensure the edge is clear
-            % Input:    refSetting, struct
-            % Output:   annoRegionFlat, mat, 2d, flatten annotation map 
-            
-            disp('Function getAnnoRegionFlat on progress...')
-            
-            refScale = refSetting.refScale;
-            
-            % Get annoMap with combined layers (level 11)
-            annoRegionFlat = TBS.getAnnoRegion(refSetting);
-            
-            % Change coordinates before find outline, cleaner
-            % Flatten the annomap to 3D ML/AP/Depth stack
-            [Y,X,Z,V] = TBS.find3(annoRegionFlat);
-            ind = sub2ind(size(annoRegionFlat),Y,X,Z);
-            annoRegionFlat = TBS.stack2flatmapIm(ind,V,ctxML,ctxAP,...
-                ctxDepthPrctile,@mode,refScale);
-            
-            % Filled the empty pixel per stack along depth
-            SE = strel('disk',3);
-            annoRegionFlat = imclose(annoRegionFlat,SE);
-            
-            % Max project the depth
-            annoRegionFlat = mode(annoRegionFlat,3);
-            
-            % Mode filter on max projection
-            annoRegionFlat = modefilt(annoRegionFlat,[7 7]);            
-        end
-                
         %% Function:    isLeftIm
         % Discription:  is left of imge (for left/right hemispher)
         function TF = isLeftIm(im)
@@ -9138,9 +9110,7 @@ classdef TBS % Terminal BARseq
         end
                                      
     end
-    
-    
-    
+       
     methods (Static)    % Data processing using flatmap ===================
         %% Function:    stack2flatmapIm
         % Description:  convert the image stack to flatmap-stack
@@ -9157,12 +9127,10 @@ classdef TBS % Terminal BARseq
             % Output:   flatStack, mat, faltmap stack using ML/AP/Depth coordinates
             %           same scale as reference map
             
-            sz = size(ctxML);
-            
             % Change ML to flatmap x-coordinates on image (>0)
-            % Find left hemiphere, change to minus
-            TF = round(sz(2)/2):sz(2);
-            ctxML(:,TF,:) = ctxML(:,TF,:).*(-1);
+            % Find left image-right hemiphere, change to minus
+            TF = TBS.isLeftIm(ctxML);
+            ctxML(~TF) = ctxML(~TF).*(-1);
             ctxML = ctxML - min(ctxML,[],'all')+1;
             
              % Change to same scale as reference map
@@ -9305,6 +9273,8 @@ classdef TBS % Terminal BARseq
                 'Curvature',[1 1],'FaceColor','k')
             
             g = gca; g.YDir = 'reverse';
+            % Flatmap2
+            g.XLim = [-9000 9000];
             daspect([1 1 1]); set(gcf,'Position',[100 100 600 300]);
         end
         
@@ -9415,7 +9385,7 @@ classdef TBS % Terminal BARseq
         
     end
     
-     methods (Static)   % Paper analysis =====================================
+    methods (Static)   % Paper analysis =====================================
         %% Function:    BCtable2cell
         % Description:  change BCtable to cell with one cell per bc
         function BCcell = BCtable2cell(BCtable,varName)
@@ -9536,8 +9506,7 @@ classdef TBS % Terminal BARseq
         end
         
     end
-    
-    
+        
     methods (Static) % Thalamus analysis ==================================        
         %% Function:    withinStrThalFiber
         % Discription:  find whether rolony is within the str-thal fiber
