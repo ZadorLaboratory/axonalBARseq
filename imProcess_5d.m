@@ -29,8 +29,10 @@ if isempty(seqCycles) == 0  % Seq image
     typePrepend = sysSetting.seqPrepend;
     chName = {'Il-G';'Il-T';'Il-A';'Il-C'};
     % Need do local and pixel correction for sequencing data
-    localCorrection = true;
+    localCorrection = true;    
+    % Value for pixel background, min rank # of intensity of the pixel
     minPixelRank = 3;
+    
 else    % Ab image
     typePrepend = sysSetting.abPrepend;
     seqCycles = TBS.getFolderNumber(directory.main,typePrepend);
@@ -194,8 +196,6 @@ for iSeq = seqCycles
             iSpotImage{iCh} = localMaxima;
         end
         
-        % Put one more layer of cell array in case there is a problem when
-        % transfer to table (???? deleted 03122021)
         if strcmp(typePrepend,sysSetting.abPrepend)==0
             spotImage{iFolder,1} = iSpotImage;
             rowNames{iFolder,1} = iTileName;
