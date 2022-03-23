@@ -5,6 +5,11 @@ These codes are for mouse 65A
 ## TBS
 Necessary, contains functions for all scripts
 
+## imProcess
+Image processing (i.e. max projection) for both sequencing and antibody data.
+Output image available, no need to rerun.
+Note: not recommend, updated script available.
+
 ## (Optional) flatmap
 Construct flatmap using Allen CCF.
 Output: ctxAP/MP/DepthPrctile; can be directly used for 65A, no need to rerun.
