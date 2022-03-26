@@ -1725,7 +1725,8 @@ classdef TBS % Terminal BARseq
         end
         
         %% Function:    stitchTileChTform
-        % Discription:  get transformation matrix by aligning in specific channels
+        % Discription:  get transformation matrix by aligning in specific
+        % channels
         function tform = stitchTileChTform(iCh,alignmentSetting,tform,...
                 fixTileNum,tileNum,tileName,iTilePos,overlapPixel)
             % Input:        alignCh, num, channel(s) for alignment
@@ -1759,7 +1760,7 @@ classdef TBS % Terminal BARseq
                 alignmentMethod = alignmentSetting.method{iCh};
             end
             
-            % Get intial fixed tile ===================================================
+            % Get intial fixed tile =======================================
             if isempty(fixTileNum)
                 fixTileNum = TBS.getInitialFixTileNum(iTilePos,tileNum);
             end
@@ -1832,7 +1833,7 @@ classdef TBS % Terminal BARseq
                         continue
                     end
                     
-                    % Get median as tform ---------------------------------------------
+                    % Get median as tform ---------------------------------
                     iTform = median(iTform,3);
                     
                     % QC: a very small scale factor
@@ -1854,7 +1855,7 @@ classdef TBS % Terminal BARseq
                 % Find the next fix tile number
                 fixTileNum = find(~cellfun(@isempty,tform));
                 fixTileNum = intersect(fixTileNum,availableFix);
-                if isempty(fixTileNum) == 1
+                if isempty(fixTileNum) 
                     break
                 else % Pick the middle of it
                     I = ceil(numel(fixTileNum)/2);
@@ -1889,6 +1890,7 @@ classdef TBS % Terminal BARseq
             tform = cell(numel(iTilePos),1);
             
             % Go through all alignment channel combinations
+            % Trie new channels if it didnt aligned previously
             for iCh = 1:length(ch)
                 
                 tform = TBS.stitchTileChTform(iCh,alignmentSetting,...
@@ -2045,6 +2047,7 @@ classdef TBS % Terminal BARseq
         
         %% Function:    fuseImage (main)
         % Discription:  fuse image according to the transformation matrix
+        % Max projeciton in the overlap region
         function tformStitchTable = fuseImage(tformStitchTable,...
                 alignmentSetting,imageSetting,sysSetting,directory)
             % Input:    tformStitchTable, table
