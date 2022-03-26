@@ -290,7 +290,7 @@ classdef TBS % Terminal BARseq
         end
               
         %% Function:    getScaleTform
-        % Discription:  get transformation matrix for scaling
+        % Discription:  get transformation matrix (3x3, 4x4) for scaling
         function scaleTform = getScaleTform(scaleFactor,dim)
             % Input:    scaleFactor, num
             %           dim, dimension for the transformation
@@ -2561,7 +2561,7 @@ classdef TBS % Terminal BARseq
             expectMaxInten = expectMaxInten2;
         end
         
-        %% Function:   chProfiling
+        %% Function:    chProfiling
         % Discription:  get mean and std of channel intensity of location
         %               requirements: discard inten beyond expectedMaxInten
         %               Calculate the mean&std of the expected dot number
@@ -2859,13 +2859,14 @@ classdef TBS % Terminal BARseq
                 % Convert chScore to intensity
                 for iTile = 1:size(chIntensity,1)
                     iChIntensity = [chScore{iTile,:}];
-                    
+                                        
                     % chScore2intnesity(chScoreMat,chProfileSetting,outputType)
                     iChIntensity = TBS.chScore2intnesity(iChIntensity,chProfileSetting,'uint16');
                     
                     % zero intensity remains 0
                     zeroInten = chIntensity{iTile,:} ==0;
-                    iChIntensity(iChIntensity == zeroInten) = 0;
+                    % Bug03242022, fixed and tested
+                    iChIntensity(zeroInten) = 0;
                     
                     ibscallTable{iTile}.chIntensity = iChIntensity;
                 end
@@ -2993,6 +2994,199 @@ classdef TBS % Terminal BARseq
         
     end
     
+    methods (Static)    % Get dot bscall by noise =========================
+        %% Function:    getNoise
+        % Discription:  Calculate noise for findMaxima
+        function noise = getNoise(iSeq,initialNoise,changeNoise)
+            % Input:        iSeq, num, sequence number
+            %               initialNoise, num/mat, initial noise from setting
+            %               changeNoise, num/mat, noise change per cycle, from setting
+            % Output:       noise, num/mat, calculated noise for the sequencing cycle
+            
+            noise = initialNoise+round(changeNoise.*(iSeq-1));
+        end
+        
+        %% Function:    getInitialNoise
+        % Discription:  get initial noise for the noise structure basing on
+        % the chScore2Inten of the current experiment
+        function noiseStructure = getInitialNoise(noiseStructure,imageSetting,directory)
+            load(fullfile(directory.main,'chProfileSetting.mat'));
+            noiseStructure.initial = round(chProfileSetting.chScore2Inten.mean*noiseStructure.initial.mean ...
+                + chProfileSetting.chScore2Inten.std*noiseStructure.initial.std);
+            noiseStructure.initial = repmat(noiseStructure.initial,1,imageSetting.chNum);
+        end
+        
+        %% Function:    getDotBeyondNoise
+        % Discription:  get dot index and bscallCh by thresholding the
+        % intensity of local maxima
+        function bscallTable = getDotBeyondNoise(bscallTable,noiseStructure,imageSetting,directory)
+            % Input & output:  bscallTable, table,with index, chIntensity, bscallCh
+            %           noiseStructure,imageSetting,sysSetting,directory:
+            %           struct
+            % Note: chIntensity will get eliminated in the output
+            
+            noiseStructure = TBS.getInitialNoise(noiseStructure,imageSetting,directory);
+            
+            rowNames = bscallTable.Properties.RowNames;
+            
+            for iSeq = imageSetting.seqCycles
+                seqName = TBS.seqstr(iSeq);
+                
+                % getNoise(iSeq,initialNoise,changeNoise)
+                noise = TBS.getNoise(iSeq,noiseStructure.initial,noiseStructure.change);
+                
+                % Get rows for the current seq
+                iRowName = contains(rowNames,seqName);
+                
+                if ~any(iRowName)
+                    continue
+                end
+                
+                iBscallTable = bscallTable.bscall(iRowName);
+                
+                % Get beyond noise signal for all channels
+                iBscallTable = cellfun(@(X) chBeyondNoise(X,noise),...
+                    iBscallTable,'UniformOutput',false);
+                
+                % delLowBscallInten(dotTable)
+                iBscallTable = cellfun(@(X) TBS.delLowBscallInten(X),...
+                    iBscallTable,'Uniformoutput',false);
+                
+                % Get table output
+                fh = @(X) X(:,{'index','bscallCh'});
+                iBscallTable = cellfun(@(X) fh(X),iBscallTable,...
+                    'Uniformoutput',false);
+                
+                bscallTable.bscall(iRowName) = iBscallTable;
+            end
+            
+            % function: chBeyondNoise -------------------------------------
+            % Discription: check whether channel intensity are beyond noise
+            function bscallTable = chBeyondNoise(bscallTable,noise)
+                bscallTable.chIntensity = bscallTable.chIntensity >= noise;
+            end
+        end
+        
+        %% Function:    ind2subInTable
+        % Discription:  change index to xy in table table
+        % Similar to in2sub
+        function bscallTable = ind2subInTable(bscallTable,imSize)
+            % Input:        bscallTable, table, one bscall table/index per row
+            %               imSize, mat, image size
+            % Output:       bscallTable, with index changed to xy coordinates
+            
+            % Check whether did the ind2sub convertion before
+            if ~any(contains(bscallTable{1,1}{:}.Properties.VariableNames,...
+                    'index','IgnoreCase',true))
+                warning('Function ind2subInTable: variable x & y already existed.')
+                return
+            end
+            
+            for iTile = 1:size(bscallTable,1)
+                iBscallTable = bscallTable.bscall{iTile};
+                index = iBscallTable.index;
+                
+                % Delete index
+                iBscallTable.index = [];
+                
+                [y,x] = ind2sub(imSize,index);
+                iBscallTable.x = x;
+                iBscallTable.y = y;
+                
+                % Update the table
+                bscallTable.bscall{iTile} = iBscallTable;
+            end
+        end
+        
+        %% Function:    getScaleBscallTable
+        % Discription:  scale the bscall table (not the somaBscall table)
+        %               and pick the maxima more precisely
+        function bscallTableOut = getScaleBscallTable(bscallTable,...
+                scaleFactor,SE,imageSetting,sysSetting,directory)
+            % Input:        bscallTable, table,
+            %               scaleFactor, num, scale up to find subpixel
+            %               location
+            %               SE, strel object, for finding local maxima
+            %               imageSetting & sysSetting & directory, stuct
+            % Output:       bscallTableOut, table, bascall result w/
+            % subpixel
+            
+            nCh = imageSetting.chNum;
+            
+            % tform for the scale factor
+            scaleTform = eye(2).*scaleFactor;
+            
+            % ensureRowNameAppend(tbl,str)
+            bscallTable = TBS.ensureRowNameAppend(bscallTable,sysSetting.imFormat);
+            rowNames = bscallTable.Properties.RowNames;
+            
+            bscallTableOut = {};
+            parfor iTile = 1:size(rowNames,1) % parfor
+                iTileName = rowNames{iTile};
+                
+                cd(directory.main);
+                iDirectory = dir(fullfile('*',iTileName));
+                
+                cd(iDirectory.folder);
+                stack = TBS.getStack(iTileName,1:nCh);
+                
+                % Current bscall result
+                bscall = bscallTable.bscall{iTileName};
+                
+                sz = size(stack);
+                
+                % Get local max area
+                % Convert uint8 to float
+                bscall.bscallCh = single(bscall.bscallCh);
+                pickedDot = [bscall.x, bscall.y, bscall.bscallCh];
+                pickedDot = TBS.xyzv2im(sz,pickedDot,[]);
+                
+                % Resize ROI and image to subpixel
+                pickedDot = imresize(pickedDot,scaleFactor);
+                stack = imresize(stack,scaleFactor,'bilinear');
+                
+                % Only pick the local maximum in selected region
+                stack(~pickedDot) = 0;
+                stack = imdilate(stack,SE) == stack & pickedDot;
+                
+                % Find xy coordinates, and channel (z)
+                [y,x,z,~] = TBS.find3(stack);
+                xyz = [x y z];
+                
+                % Scale back in xy axis
+                xyz(:,1:2) = xyz(:,1:2)*inv(scaleTform);
+                xyz = single(xyz);
+                
+                iBscallTableOut = array2table(xyz,'VariableNames',...
+                    {'x','y','bscallCh'});
+                iBscallTableOut.bscallCh = uint8(iBscallTableOut.bscallCh);
+                bscallTableOut{iTile,1} = iBscallTableOut;
+                
+                disp(['Scale bscallTable, Done: ',iTileName]);
+            end
+            
+            bscallTableOut = table(bscallTableOut,'RowNames',...
+                rowNames,'VariableNames',{'bscall'});
+        end
+        
+        %% Function:    uniqueDotPerPixel
+        % Discription:  trim extra dot and get unique dot per pixel
+        function tbl = uniqueDotPerPixel(tbl)
+            % (will slightly bias to smaller x)
+            % Input & output:    tbl, table, with xy coordinates and bscall result
+            
+            [~,I] = sort(tbl.x,'ascend');
+            tbl = tbl(I,:);
+            
+            xy = [tbl.x, tbl.y];
+            xy = round(xy);
+            [~,ia,~] = unique(xy,'rows');
+            
+            tbl = tbl(ia,:);
+        end
+        
+    end
+        
     methods (Static)    % Fuse image alignment ============================
         %% Function:    estimateTranslation
         % Discription:  estimate translation matrix using tile position
@@ -3205,199 +3399,7 @@ classdef TBS % Terminal BARseq
         end
         
     end
-    
-    methods (Static)    % Get dot bscall by noise =========================
-        %% Function:    getNoise
-        % Discription:  Calculate noise for findMaxima
-        function noise = getNoise(iSeq,initialNoise,changeNoise)
-            % Input:        iSeq, num, sequence number
-            %               initialNoise, num/mat, initial noise from setting
-            %               changeNoise, num/mat, noise change per cycle, from setting
-            % Output:       noise, num/mat, calculated noise for the sequencing cycle
-            
-            noise = initialNoise+round(changeNoise.*(iSeq-1));
-        end
         
-        %% Function:    getInitialNoise
-        % Discription:  get initial noise for the noise structure basing on
-        % the chScore2Inten of the current experiment
-        function noiseStructure = getInitialNoise(noiseStructure,imageSetting,directory)
-            load(fullfile(directory.main,'chProfileSetting.mat'));
-            noiseStructure.initial = round(chProfileSetting.chScore2Inten.mean*noiseStructure.initial.mean ...
-                + chProfileSetting.chScore2Inten.std*noiseStructure.initial.std);
-            noiseStructure.initial = repmat(noiseStructure.initial,1,imageSetting.chNum);
-        end
-        
-        %% Function:    getDotBeyondNoise
-        % Discription:  get dot index and bscallCh by thresholding the
-        % intensity of local maxima
-        function bscallTable = getDotBeyondNoise(bscallTable,noiseStructure,imageSetting,directory)
-            % Input & output:  bscallTable, table,with index, chIntensity, bscallCh
-            %           noiseStructure,imageSetting,sysSetting,directory:
-            %           struct
-            
-            noiseStructure = TBS.getInitialNoise(noiseStructure,imageSetting,directory);
-            
-            rowNames = bscallTable.Properties.RowNames;
-            
-            for iSeq = imageSetting.seqCycles
-                seqName = TBS.seqstr(iSeq);
-                
-                % getNoise(iSeq,initialNoise,changeNoise)
-                noise = TBS.getNoise(iSeq,noiseStructure.initial,noiseStructure.change);
-                
-                % Get rows for the current seq
-                iRowName = contains(rowNames,seqName);
-                
-                if ~any(iRowName)
-                    continue
-                end
-                
-                iBscallTable = bscallTable.bscall(iRowName);
-                
-                % Get beyond noise signal for all channels
-                iBscallTable = cellfun(@(X) chBeyondNoise(X,noise),...
-                    iBscallTable,'UniformOutput',false);
-                
-                % delLowBscallInten(dotTable)
-                iBscallTable = cellfun(@(X) TBS.delLowBscallInten(X),...
-                    iBscallTable,'Uniformoutput',false);
-                
-                % Get table output
-                fh = @(X) X(:,{'index','bscallCh'});
-                iBscallTable = cellfun(@(X) fh(X),iBscallTable,...
-                    'Uniformoutput',false);
-                
-                bscallTable.bscall(iRowName) = iBscallTable;
-            end
-            
-            % function: chBeyondNoise -------------------------------------
-            % Discription: check whether channel intensity are beyond noise
-            function bscallTable = chBeyondNoise(bscallTable,noise)
-                bscallTable.chIntensity = bscallTable.chIntensity >= noise;
-            end
-        end
-        
-        %% Function:    ind2subInTable
-        % Discription:  change index to xy in table table
-        % Similar to in2sub
-        function bscallTable = ind2subInTable(bscallTable,imSize)
-            % Input:        bscallTable, table, one bscall table/index per row
-            %               imSize, mat, image size
-            % Output:       bscallTable, with index changed to xy coordinates
-            
-            % Check whether did the ind2sub convertion before
-            if ~any(contains(bscallTable{1,1}{:}.Properties.VariableNames,...
-                    'index','IgnoreCase',true))
-                warning('Function ind2subInTable: variable x & y already existed.')
-                return
-            end
-            
-            for iTile = 1:size(bscallTable,1)
-                iBscallTable = bscallTable.bscall{iTile};
-                index = iBscallTable.index;
-                
-                % Delete index
-                iBscallTable.index = [];
-                
-                [y,x] = ind2sub(imSize,index);
-                iBscallTable.x = x;
-                iBscallTable.y = y;
-                
-                % Update the table
-                bscallTable.bscall{iTile} = iBscallTable;
-            end
-        end
-        
-        %% Function:    getScaleBscallTable
-        % Discription:  scale the bscall table (not the somaBscall table)
-        %               and pick the maxima more precisely
-        function bscallTableOut = getScaleBscallTable(bscallTable,...
-                scaleFactor,SE,imageSetting,sysSetting,directory)
-            % Input:        bscallTable, table,
-            %               scaleFactor, num, scale up to find subpixel
-            %               location
-            %               SE, strel object, for finding local maxima
-            %               imageSetting & sysSetting & directory, stuct
-            % Output:       bscallTableOut, table, bascall result w/
-            % subpixel
-            
-            nCh = imageSetting.chNum;
-            
-            % tform for the scale factor
-            scaleTform = eye(2).*scaleFactor;
-            
-            % ensureRowNameAppend(tbl,str)
-            bscallTable = TBS.ensureRowNameAppend(bscallTable,sysSetting.imFormat);
-            rowNames = bscallTable.Properties.RowNames;
-            
-            bscallTableOut = {};
-            parfor iTile = 1:size(rowNames,1) % parfor
-                iTileName = rowNames{iTile};
-                
-                cd(directory.main);
-                iDirectory = dir(fullfile('*',iTileName));
-                
-                cd(iDirectory.folder);
-                stack = TBS.getStack(iTileName,1:nCh);
-                
-                % Current bscall result
-                bscall = bscallTable.bscall{iTileName};
-                
-                sz = size(stack);
-                
-                % Get local max area
-                % Convert uint8 to float
-                bscall.bscallCh = single(bscall.bscallCh);
-                pickedDot = [bscall.x, bscall.y, bscall.bscallCh];
-                pickedDot = TBS.xyzv2im(sz,pickedDot,[]);
-                
-                % Resize ROI and image to subpixel
-                pickedDot = imresize(pickedDot,scaleFactor);
-                stack = imresize(stack,scaleFactor,'bilinear');
-                
-                % Only pick the local maximum in selected region
-                stack(~pickedDot) = 0;
-                stack = imdilate(stack,SE) == stack & pickedDot;
-                
-                % Find xy coordinates, and channel (z)
-                [y,x,z,~] = TBS.find3(stack);
-                xyz = [x y z];
-                
-                % Scale back in xy axis
-                xyz(:,1:2) = xyz(:,1:2)*inv(scaleTform);
-                xyz = single(xyz);
-                
-                iBscallTableOut = array2table(xyz,'VariableNames',...
-                    {'x','y','bscallCh'});
-                iBscallTableOut.bscallCh = uint8(iBscallTableOut.bscallCh);
-                bscallTableOut{iTile,1} = iBscallTableOut;
-                
-                disp(['Scale bscallTable, Done: ',iTileName]);
-            end
-            
-            bscallTableOut = table(bscallTableOut,'RowNames',...
-                rowNames,'VariableNames',{'bscall'});
-        end
-        
-        %% Function:    uniqueDotPerPixel
-        % Discription:  trim extra dot and get unique dot per pixel
-        function tbl = uniqueDotPerPixel(tbl)
-            % (will slightly bias to smaller x)
-            % Input & output:    tbl, table, with xy coordinates and bscall result
-            
-            [~,I] = sort(tbl.x,'ascend');
-            tbl = tbl(I,:);
-            
-            xy = [tbl.x, tbl.y];
-            xy = round(xy);
-            [~,ia,~] = unique(xy,'rows');
-            
-            tbl = tbl(ia,:);
-        end
-        
-    end
-    
     methods (Static)    % Dot alignment (DA) ==============================
         %% Function:    DA_getDotPair
         % Discription:  get index of moving-fix pair, using translaiton
@@ -3915,8 +3917,9 @@ classdef TBS % Terminal BARseq
                     moving = [moving.x,moving.y];
                     moving = transformPointsForward(affine2d(movingTform),moving);
                     
-                    % alignment sequence for finding fix seq
-                    % 06132021
+                    % alignment sequence for finding fix seq, 06132021
+                    % Note03252022, this is not optimal after getAlignmentSeq
+                    % but it works
                     if alignmentSeq(i) >  alignmentSeq(i-1)
                         jAlignmentSeq = seqCycles(1:alignmentSeq(i-1));
                         jAlignmentSeq = fliplr(jAlignmentSeq);
@@ -3967,6 +3970,7 @@ classdef TBS % Terminal BARseq
                         fix = single(fix); moving = single(moving);
                         
                         % alignDot(moving,fix,dim,binSz,dotLim,maxDist)
+                        % Parameter need to be detertermin mannually
                         % tform: projective/affine object
                         tform = TBS.alignDot(moving,fix,2,5,4000,200);
                         
@@ -4406,6 +4410,8 @@ classdef TBS % Terminal BARseq
                     end
                     
                     % 08292021, stitch sequence
+                    % Allow delete later overlap regions due to possible
+                    % optical distortion
                     I = TBS.getStitchingSeq(tileName,sysSetting,imageSetting);                    
                     tileName = tileName(I,:);
                     
@@ -4792,10 +4798,12 @@ classdef TBS % Terminal BARseq
             end
         end
         
-        %% Function:    abvMaxInterval
-        % Discription:  delete barcode with interval above max interval
-        function TF = abvMaxInterval(id,maxSeqInterval)
+        %% Function:    blwMaxInterval
+        % Discription:  barcode with interval below max interval
+        function TF = blwMaxInterval(id,maxSeqInterval)
             % Max interval is not included missing seqing cycle
+            % Note03252022: function name change from abvMaxInterval to
+            % below to fit the function
             % Input & output: id, mat, barcode matrix, one row per bc, one
             % column per seq
             %           maxSeqInterval, num, maximum interval with no
@@ -5003,7 +5011,7 @@ classdef TBS % Terminal BARseq
                 [~,I] = sort(I,'ascend');
                 inteSeqPair = inteSeqPair(I);
                 
-                % Mathc dots ----------------------------------------------
+                % Match dots ----------------------------------------------
                 % pair of dot ID for fix & moving for each seq pair
                 % TBS.getDotPair(moving,fix,maxDist);
                 pairID = cellfun(@(X) TBS.getDotPair(bscallCell{X(2)},...
@@ -5055,7 +5063,7 @@ classdef TBS % Terminal BARseq
                     % Clean output: delete interval > max interval --------
                     % 08282021, delete after matching all the 4th position,
                     % there is still 3-nt space in the middle
-                    TF = TBS.abvMaxInterval(id,maxSeqInterval+1);
+                    TF = TBS.blwMaxInterval(id,maxSeqInterval+1);
                     id = id(TF,:);
                     
                     % Merge rows ------------------------------------------
@@ -5068,7 +5076,7 @@ classdef TBS % Terminal BARseq
                 end
                 
                 % Delete the maxSeqInterval+1 interval for the last digit
-                TF = TBS.abvMaxInterval(id,maxSeqInterval);
+                TF = TBS.blwMaxInterval(id,maxSeqInterval);
                 id = id(TF,:);
                 
                 % Exclude short barcodes ----------------------------------
@@ -6443,6 +6451,13 @@ classdef TBS % Terminal BARseq
         %% Function:    randBC
         % Discription:  get random unique BC
         function bc = randBC(nBC,nSeq,n,maxHamming)
+            % Input:    nBC, num, number of barcode
+            %           nSeq, num, number of nt per barcode
+            %           n, number, digit of degenerated barcode
+            %           maxHamming,num,
+            % Output:   bc, barcode matrix
+            
+            
             nBC2 = nBC * 1.5;
             
             % Random unique BC matrix
@@ -7196,7 +7211,7 @@ classdef TBS % Terminal BARseq
             TF = TBS.BClongEngouth(TF,excludeSeq,minBClen);
             
             % BC has too big intervel -------------------------------------
-            TF2 = TBS.abvMaxInterval(tbl.bscallCh{:},maxSeqInterval);
+            TF2 = TBS.blwMaxInterval(tbl.bscallCh{:},maxSeqInterval);
             
             % Rows fits interval and length requirements
             TF = TF & TF2;
@@ -9158,24 +9173,6 @@ classdef TBS % Terminal BARseq
             flatStack = TBS.xyzv2im(sz,xyz,v);            
         end
         
-        %% Function:    roiAPLim
-        % Discription:  get AP limit for current image (roi)
-        function roiAP = roiAPLim(roi,ctxAP,refScale)
-            % Input:    roi, mat, pixel area marks the region of interest
-            %           ctxAP, mat, reference AP-value
-            %           refScale, num, pixel per micron
-            % Output:   roiAP, vector, AP limit in roi (current image)
-            
-            % Fidn stack area
-            TF = any(roi,1:2);
-            roi = ctxAP(:,:,TF);
-            
-            % Find the min and max AP-value in stack area
-            roiAP = nonzeros(roi);
-            roiAP = roiAP.*refScale; % <--------------------------------------- ???? why * refScale
-            roiAP = [floor(min(roiAP)),ceil(max(roiAP))];
-        end
-
         %% Function:    getMLAPD
         % Discription:  get ML/AP/depth coordinates
         function mlapd = getMLAPD(xyz,ctxML,ctxAP,ctxDepthPrctile)
@@ -9294,6 +9291,28 @@ classdef TBS % Terminal BARseq
     end
     
     methods (Static)    % Cortical analysis ===============================
+        %% Function:    BCtable2cell
+        % Description:  change BCtable to cell with one cell per bc
+        function BCcell = BCtable2cell(BCtable,varName)
+            % Input:    BCtable, table, one image per row
+            %           varName, str, content of the variable into the cell
+            % Output:   BCcell, cell, info from one BC per cell
+            
+            var = BCtable.(varName);
+            id = BCtable.codeID;
+            
+            var = vertcat(var{:});
+            id = vertcat(id{:});
+            
+            nBC = max(id);
+            
+            BCcell = cell(nBC,1);
+            for i = 1:nBC
+                row = id == i;
+                BCcell{i} = var(row,:);
+            end            
+        end
+        
         %% Function:    nearSomaExcl
         %  Discription: exclude rolony within a range of injection center
         function mlapdDot = nearSomaExcl(mlapdDot,mlapdSoma,p,isCtrl)
@@ -9381,31 +9400,6 @@ classdef TBS % Terminal BARseq
             
             xlabel('ML (\mum)'); ylabel('AP (\mum)');
             TBS.axLabelSettings('Myriad Pro',12);
-        end
-        
-    end
-    
-    methods (Static)   % Paper analysis =====================================
-        %% Function:    BCtable2cell
-        % Description:  change BCtable to cell with one cell per bc
-        function BCcell = BCtable2cell(BCtable,varName)
-            % Input:    BCtable, table, one image per row
-            %           varName, str, content of the variable into the cell
-            % Output:   BCcell, cell, info from one BC per cell
-            
-            var = BCtable.(varName);
-            id = BCtable.codeID;
-            
-            var = vertcat(var{:});
-            id = vertcat(id{:});
-            
-            nBC = max(id);
-            
-            BCcell = cell(nBC,1);
-            for i = 1:nBC
-                row = id == i;
-                BCcell{i} = var(row,:);
-            end            
         end
         
         %% Function:    plotSoma
@@ -9507,7 +9501,7 @@ classdef TBS % Terminal BARseq
         
     end
         
-    methods (Static) % Thalamus analysis ==================================        
+    methods (Static)    % Thalamus analysis ===============================
         %% Function:    withinStrThalFiber
         % Discription:  find whether rolony is within the str-thal fiber
         function TF = withinStrThalFiber(xyz)
@@ -9681,6 +9675,7 @@ classdef TBS % Terminal BARseq
         %% Function:    groupCTPT (main)
         % Discription:  group thal+ cells into CTPT
         function idx2 = groupCTPT(xyzDot,thalReg,strReg,mbReg)
+            % Note 03232022: no count threshold was used in this function
             % NaN: cells with no projection to thalamus; 0: CT; 1: PT
             % Input:    xyzDot, cell, xyz coordinates in reference
             % framework
@@ -9786,7 +9781,7 @@ classdef TBS % Terminal BARseq
         
     end
     
-    methods (Static) % Barcoded cell reconstruction ======================= 
+    methods (Static)    % Barcoded cell reconstruction ====================
         %% Function:    pdistCluster
         % Discription:  Find the shortest distance between cluster
         function [D,I] = pdistCluster(dotXYZ,clusterID)
