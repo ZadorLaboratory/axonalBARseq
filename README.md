@@ -21,6 +21,9 @@ Output data need to be cleaned for the downstream analysis.
 
 ## combineBC_8C
 
+## abStitching_2
+Stithing DAPI/antibody stanining whole brain images.
+
 ## (Optional) flatmap_2
 Construct flatmap using Allen CCF.
 
