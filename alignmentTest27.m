@@ -1,7 +1,10 @@
 % Basecall using the finished tileReg
 % Get bscall stack of each tile for stitching
-% Note: some variable is too big, need to be saved as '-v7.3'
-% Note: currently only support <=255 nt long barcode
+% Notes:
+% 1, some variable is too big, need to be saved as '-v7.3'
+% 2?, currently only support <=255 nt long barcode
+% 3, Tile alignment: aligned to reference or neigboring cycle. Completely
+% dependent on neigboring cycle may result of accumulative shift
 
 clear
 clc
@@ -11,7 +14,7 @@ clc
 addpath('C:\Users\Li Yuan\MATLAB Drive\Script65A');
 
 directory= [];
-directory.main = 'D:\Li Yuan\11282019_65A_7th\Batch2\';
+directory.main = 'D:\Li Yuan\09232019_65A_4th\Batch1\';
 directory.stitched = fullfile(directory.main,'stitched');
 directory.temporary = fullfile(directory.main,'temporary');
 % Folder for stitched chCorrected file for basecalling
@@ -126,7 +129,7 @@ dotMatchingSetting.seqNotInMinBscallCycles = [9,10];
 dotTable = TBS.getDotTable(spotMatName,imageSetting,sysSetting,directory);
 save(fullfile(directory.main,'dotTable.mat'),'dotTable','-v7.3');
 
-% %% Bleedthrough & channel corrections
+%% Bleedthrough & channel corrections
 
 cd(directory.main);
 load('dotTable.mat');
@@ -164,7 +167,7 @@ correctedDotTable = dotTable;
 save(strcat(directory.main,'correctedDotTable.mat'),'correctedDotTable','-v7.3');
 clearvars dotTable
 
-% %% Image channel correction
+%% Image channel correction
 
 load(fullfile(directory.main,'bleedThroughEstimation.mat'));
 load(fullfile(directory.main,'chEstimateCfun.mat'));
@@ -172,12 +175,13 @@ load(fullfile(directory.main,'chProfileSetting.mat'));
 
 % Assign universal mean and std for intensity calculation
 % for the same mouse (mannually selected)
+% Note03242022, this is different from rolony intensity
 chProfileSetting = TBS.getChScore2Inten(chProfileSetting);
 
 % Modified sysSetting.tileAppend to chCorrected
 sysSetting = TBS.imageChCorrectionMain(bleedThroughEstimation,chEstimateCfun,chProfileSetting,imageSetting,sysSetting,directory);
 
-% %% bscallTable
+%% bscallTable
 % Rolony for data
 
 % double check the tile append to chCorrectAppend
@@ -190,12 +194,12 @@ correctedDotTable = TBS.strrepRowName(correctedDotTable,sysSetting.localCorrectA
 correctedDotTable = TBS.getDotBeyondNoise(correctedDotTable,bscallNoise,imageSetting,directory);
 correctedDotTable = TBS.ind2subInTable(correctedDotTable,imageSetting.tileSize);
 
-% %% Subpixel location of the dot center by scaling the image ================
+% Subpixel location of the dot center by scaling the image ----------------
 % Range for finding local maxima
 SE = strel('diamond',2);
 bscallTable = TBS.getScaleBscallTable(correctedDotTable,scaleFactor,SE,imageSetting,sysSetting,directory);
 
-% Delete extra dots, one dot per pixel ====================================
+% Delete extra dots, one dot per pixel ------------------------------------
 % load(fullfile(directory.main,'bscallTable.mat'));
 bscallTable.bscall = cellfun(@(X) TBS.uniqueDotPerPixel(X),...
     bscallTable.bscall,'UniformOutput',false);
@@ -204,9 +208,9 @@ save(strcat(directory.main,'bscallTable.mat'),'bscallTable','-v7.3');
 
 clearvars correctedDotTable scaledBscallTable
 
-%% Get fuse image, rough alignment
+%% Get fuse image, rough alignment ========================================
 % Settings
-% Scale down for fast processing
+% Scale down for fast processing (alignment will be done in scaled image)
 scaleRatio = 0.5;
 
 redoTF = true;
@@ -223,9 +227,15 @@ end
 % to avoid posibility of error of missing or misalinment; also much faster
 fuseStitchTable = fuseImage(scaleRatio,imageSetting,sysSetting,directory);
 
-% Align stitch image ------------------------------------------------------
+% Align scaled fused image ------------------------------------------------
+
+% Maximum intensity for the stitched image to avoid error due to bight
+% unspecific signals, fused image in uint8 format max 255
 maxInten = 100;
-nTime = 3; % Align # times
+% Number of alignement per fuse image, to the previous cycles
+% Increas number of alignment decrease error but slower
+nTime = 3;
+
 fuseAlignTform = TBS.alignFuseImage(redoTF,nTime,maxInten,...
     imageSetting,sysSetting,directory);
 
@@ -246,20 +256,26 @@ if checkAlignment
     end
 end
 
-%% ======================================================
+%% Get tformTable =========================================================
+% from aligning individual tiles 
+
+redoTF = true;
 scaleRatio = 0.5;
 
-sysSetting.tileAppend = sysSetting.chCorrectAppend;
-
-profile on
-
-% Get tform across sequencing cycles --------------------------------------
 cd(directory.temporary);
 load('fuseStitchTable.mat');
 load('fuseAlignTform.mat');
+load(fullfile(directory.main,'bscallTable.mat'));
+
+% Get tform across sequencing cycles --------------------------------------
+% Accumulate tform according to alignment sequence
+% Merge tform if there is multiple tform per fuse image
+
+% getAccumulateTform(tformTable,movingVar,fixVar,tformVar)
 fuseAlignTform = TBS.getAccumulateTform(fuseAlignTform,'movingName','fixName','tform');
 
-% Scale back --------------------------------------------------------------
+% Scale back 
+% If the alignment were done in scaled images
 if scaleRatio ~= 1
     % S*T*inv(S)
     scaleTform = TBS.getScaleTform(scaleRatio,2);
@@ -267,35 +283,29 @@ if scaleRatio ~= 1
         fuseAlignTform.tform,'UniformOutput',false);
 end
 
-% Add alignment tform to the stitch tform ---------------------------------
+% Add alignment tform (imge tform) to the stitch tform (tile tform)
 % addImTform2TileTform(imTform,tileTform);
 fuseStitchTable = TBS.addImTform2TileTform(fuseAlignTform,fuseStitchTable,sysSetting);
-
-% %% Get tformTable =========================================================
-% from aligning individual tiles 
-
-redoTF = true;
-
-load(fullfile(directory.main,'bscallTable.mat'));
 
 % Delete wrong images & tiles (identified mannually)
 % (This session is here because wrong images were identified using fuse
 % image, so just delete the file and rerun this part would be fine)
 bscallTable = TBS.delWrongTile(bscallTable);
 
+% (Only aligned once)
 % getTformTable(spot4Align,fuseStitchTable,redoTF,nTime,imageSetting,sysSetting)
 tformTable = TBS.getTformTable(bscallTable,fuseStitchTable,true,imageSetting,sysSetting,directory);
 
 save(fullfile(directory.main,'tformTable.mat'),'tformTable');
 
-% %% accumulateTformTable1: tile alignment -----------------------------------
+% accumulateTformTable1: tile alignment -----------------------------------
 load(fullfile(directory.main,'tformTable.mat'));
 
 accumulateTformTable1 = TBS.getAccumulateTform(tformTable,'movingName','fixName','tform');
 
 save(strcat(directory.main,'accumulateTformTable1.mat'),'accumulateTformTable1');
 
-% %% Stitching tiles ======================================================
+%% Stitching tiles ========================================================
 % basing on dot positions
 
 load(fullfile(directory.main,'bscallTable.mat'))
@@ -304,7 +314,7 @@ load(fullfile(directory.main,'accumulateTformTable1.mat'))
 % Transform dot coordinates for tile stitching 
 tfBscallTable = TBS.tranformXYinTable(bscallTable,accumulateTformTable1);
 
-% (Check point) Test accumulate tform ---------------------------------------------------
+% (Check point) Test accumulate tform -------------------------------------
 % im1 = 'EF65ASlide19L_Seq15_Contra_05_chCorrected.tif';
 % moving = tfBscallTable.bscall{im1}{:,1:2};
 % im2 =  'EF65ASlide19L_Seq09_Contra_05_chCorrected.tif';
