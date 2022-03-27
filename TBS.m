@@ -93,18 +93,7 @@ classdef TBS % Terminal BARseq
                 stack = cat(dimension4stackCell,stack,cellArray{i});
             end
         end
-        
-        %% Function:    cell2stackFun
-        % Discription:  Change cell array (w/ mat) into a stacked mat
-        function stack = cell2stackFun(cellArray,fh)
-            
-            stack = cellArray{1};
-            
-            for i = 2:length(cellArray)
-                stack = fh(stack,cellArray{i});
-            end
-        end
-        
+                
         %% Function:    stack2cell
         % Discription:  change stack (3d-mat) to cell array
         function cellArray = stack2cell(stack)
@@ -162,7 +151,7 @@ classdef TBS % Terminal BARseq
             % Input:    tbl, table
             %           oldStr, newStr, old and new string for the row name
             
-            if istable(tbl) == 0
+            if ~istable(tbl)
                 error('Input tbl is not a table');
             end
             
@@ -171,124 +160,7 @@ classdef TBS % Terminal BARseq
                 'Uniformoutput',false);
             tbl.Properties.RowNames = rowNames;
         end
-        
-        %% Function:    updateVarInTableArray
-        % Discription:  update variable with specific input
-        %               will pass non-table cells
-        function cell= updateVarInTableArray(cell,varStr,updateCell)
-            S.type = '.';
-            S.subs = varStr;
-            
-            isTableCell = cellfun(@istable,cell);
-            
-            cell(isTableCell) = cellfun(@(A,B) subsasgn(A,S,B),...
-                cell(isTableCell),updateCell(isTableCell),'UniformOutput',false);
-        end
-        
-        %% Function:    castVariableInCell
-        % Discription:  cast variable into new class type
-        %               check the max of variable before casting
-        function cellArray = castVariableInCell(cellArray,varName,classType)
-            % Get the value of var and the max of var
-            variable = cellfun(@(X) X.(varName),cellArray,'Uniformoutput',false);
-            % 01012020, allow empty cell
-            emtpyCell = cellfun(@isempty,variable);
-            maxVarValue = max(cellfun(@max,variable(~emtpyCell)));
-            
-            fh = str2func(classType);
-            % Check whether the max value reach the max value of the class type
-            if maxVarValue <= 2^22 && strcmp(classType,'single') == 1
-                checkMax = true;
-            elseif maxVarValue <= fh(inf) && ismember(classType,{'single','double'}) == 0
-                % Not convert to floating
-                checkMax = true;
-            else
-                %                 warning('Function castVariableInCell: the convertion is not currently supported.')
-                checkMax = false;
-            end
-            
-            % cast if pass the check
-            if checkMax == true
-                variable = cellfun(@(X) fh(X),variable,'Uniformoutput',false);
-                cellArray = TBS.updateVarInTableArray(cellArray,varName,variable);
-                warning(strcat("Function castVariableInCell: ",varName,...
-                    " is casted to ",classType));
-            end
-        end
-        
-        %% Function:    cell2matInNonDouble
-        % Discription:  cell2mat of cell with content are double and
-        % another class type
-        function matOut = cell2matInNonDouble(cellIn)
-            % The default empty cell could be double, so change the class
-            % before doing mat 2 cell
-            % Input: cellIn, cell; Output: matOut, mat
-            
-            classType = cellfun(@class,cellIn,'UniformOutput',false);
-            classType = unique(classType);
-            classType = classType(~strcmp(classType,'double'));
-            
-            if numel(classType) > 1
-                error('Function cell2matInNonDouble input has more than two class types.')
-            elseif numel(classType) == 1
-                classType = classType{:};
-                cellIn = cellfun(@(X) cast(X,classType),cellIn,'Uniformoutput',false);
-            end
-            
-            matOut = cell2mat(cellIn);
-        end
-        
-        %% Funciton:    imadjustFull (used?, change into normZmaxInten)
-        % Discription:  adjust image intensity min to max to the 0 and
-        % saturated intensity in the output image
-        function im = imadjustFull(im,minIntensity,maxIntensity,outputBits)
-            % Input:    im, mat, image
-            %           minIntenisty/maxIntensity, the min/max intensity in
-            %           the original image
-            %           outputBits, str, the bits of the image, e.g. 'uint8'
-            % Output:   im, mat, adjust image
-            
-            % Get function handle for bits conversiton
-            outputBitsFh = str2func(outputBits);
-            saturateInten = outputBitsFh(inf);
-            
-            % Change into single for intensity adjustment (floating)
-            im = single(im);
-            minIntensity = single(minIntensity);
-            maxIntensity = single(maxIntensity);
-            
-            % Minus min intensity
-            im = im - minIntensity;
-            
-            % Ajust the range
-            im = im./(maxIntensity./single(saturateInten));
-            
-            % Change into output bits
-            im = outputBitsFh(im);
-        end
-        
-        %% Function:    normZmaxInten (change into imadjust?)
-        % Discription:  normalize max intensity along z-axis
-        function im = normZinten(im, maxPrctile,cameraOffset)
-            % Input & output:   im, mat, image stack
-            %                   maxPrctile, num, max prctile for each
-            %                   stack normalized max intensity
-            %                   cameraOffset, num, camera offset
-            
-            classType = class(im);
-            fh = @(X) cast(X,classType);
-            
-            im = single(im);
-            
-            if nargin == 3
-                im = im - cameraOffset;
-            end
-            
-            im = im./prctile(im,maxPrctile,[1 2]).*single(fh(inf));
-            
-            im = fh(im);
-        end
-              
+         
         %% Function:    getScaleTform
         % Discription:  get transformation matrix (3x3, 4x4) for scaling
         function scaleTform = getScaleTform(scaleFactor,dim)
@@ -300,19 +172,7 @@ classdef TBS % Terminal BARseq
             scaleTform(1,1) = scaleFactor;
             scaleTform(2,2) = scaleFactor;
         end
-        
-        %% Function:    findCell
-        % Discription:  find nonempty cell
-        function [C, I] = findCell(C)
-            % Input & output: C, cell array
-            %       I, vector, index
-            
-            I = ~cellfun(@isempty,C);
-            
-            C = C(I);
-            I = find(I);
-        end
-        
+                
         %% Function:    find3
         % Discription:  find nonzeros element in 3d space
         function [row, col, z, v] = find3(matIn)
@@ -473,21 +333,7 @@ classdef TBS % Terminal BARseq
             R(2,2) = cosd(ang); R(2,3) = sind(ang);
             R(3,2) = -sind(ang); R(3,3) = cosd(ang);
         end
-        
-        %% Function:    getOutline
-        % Discription:  get outline of the stack, disk SE
-        function outlineStack = getOutline(stack,width)
-            SE = strel('disk',width);
-            
-            % 12172020,Pad array with 0 incase signal reaches the edge
-            stack = padarray(stack,[1 1],0,'both');
-            outlineStack = imerode(stack,SE) == 0 & stack;
-            
-            % Discard the padding region
-            outlineStack = outlineStack(2:end-1,:,:);
-            outlineStack = outlineStack(:,2:end-1,:);
-        end
-        
+                
         %% Function:    imfillHoles3
         % Discription:  fill holes in stacks of images
         function im = imfillHoles3(im)
@@ -5166,93 +5012,6 @@ classdef TBS % Terminal BARseq
             % Delete empty row
             row = cellfun(@isempty,tbl.bscallCh);
             tbl = tbl(~row,:);
-        end
-        
-        %% Function:    mergeDotID
-        % Discription:  merge dot id basing on hamming distance
-        % 0 will be tolerated
-        function tbl = mergeDotID(tbl,IDtolerance,BCtoerlance)
-            % Input & Output:   tbl, table, with id, bscallCh, x & y
-            %       IDtolerance, num, max hamming distance of similar id
-            %       BCtolerance, num, max hamming distance of similar BC
-            
-            similarFh = @(X) X(2:end,:) == X(1:end-1,:) |...
-                X(2:end,:) == 0 | X(1:end-1,:) == 0;
-            
-            id = tbl.id{:}; bscallCh = tbl.bscallCh{:};
-            x = tbl.x{:}; y = tbl.y{:};
-            
-            nID = size(id,1); % For size check
-            nSeq = size(id,2);
-            
-            i = 1;
-            while i <= nSeq
-                % Find rows with similar id -------------------------------
-                [id,I] = sortrows(id,i);
-                bscallCh = bscallCh(I,:); x = x(I,:); y = y(I,:);
-                
-                % Digit identical to the next row
-                sameID = similarFh(id);
-                sameID = sum(sameID,2);
-                
-                TFrow = nSeq - sameID; % Difference
-                % Rows similar (within ID tolerance)
-                TFrow = TFrow <= IDtolerance;
-                
-                % (Optional) With similar BC ------------------------------
-                if ~isempty(BCtoerlance)
-                    sameBC = similarFh(bscallCh);
-                    sameBC = sum(sameBC,2);
-                    
-                    TFrow2 = nSeq - sameBC; % Difference
-                    % BC difference within tolerance
-                    TFrow2 = TFrow2 <= BCtoerlance;
-                    
-                    TFrow = TFrow & TFrow2;
-                end
-                
-                % Merege rows ---------------------------------------------
-                if any(TFrow)
-                    TFrow = find(TFrow);
-                    
-                    % Replace with content with bigger id
-                    replaceI = id(TFrow,:) < id(TFrow+1,:);
-                    
-                    id = mergeContent(id,TFrow,replaceI);
-                    bscallCh = mergeContent(bscallCh,TFrow,replaceI);
-                    x = mergeContent(x,TFrow,replaceI);
-                    y = mergeContent(y,TFrow,replaceI);
-                    
-                    continue
-                end
-                
-                if i < nSeq
-                    i = i+1;
-                    continue
-                elseif size(id,1) == nID
-                    break
-                elseif size(id,1) < nID
-                    i = 1; nID = size(id,1);
-                end
-            end
-            
-            tbl.id = {id}; tbl.bscallCh = {bscallCh};
-            tbl.x = {x}; tbl.y = {y};
-            
-            % Function: mergeContent --------------------------------------
-            % Discription:  merge content according to the logical mat
-            function X = mergeContent(X,TFrow,replaceI)
-                % TFrow, vector, row for modification
-                % replaceI, logical mat, for replacement in the TFrow
-                
-                Xcontent = X(TFrow,:); Xcontent2 = X(TFrow+1,:);
-                % Replace content from the next row
-                Xcontent(replaceI) = Xcontent2(replaceI);
-                
-                % Merge X
-                X(TFrow,:) = Xcontent;
-                X(TFrow+1,:) = [];
-            end
         end
         
         %% Function:    getBscallBW
