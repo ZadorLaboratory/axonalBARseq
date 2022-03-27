@@ -5,21 +5,13 @@ These codes are for mouse 65A
 ## TBS
 Necessary, contains functions for all scripts
 
+
 ## imProcess_5d
 Image processing (i.e. max projection) for both sequencing and antibody data.
 
 Output image available, no need to rerun.
 
 Note: not recommend, updated script available.
-
-## alignmentTest27
-Script alignment and basecalling for every batch of experiments. 
-
-Output variable available, no need to refun.
-
-Output data need to be cleaned for the downstream analysis.
-
-## combineBC_8C
 
 
 ## abStitching_2
@@ -28,6 +20,26 @@ Stithing DAPI/antibody stanining whole brain images.
 Output image available, no need to rerun.
 
 Note: not recommend, updated script available.
+
+
+## alignmentTest27
+Alignment and basecalling for every batch of experiments. 
+
+Output variable available, no need to refun.
+
+Output data need to be cleaned for the downstream analysis.
+
+
+## register2Volume
+
+Registration experiments to a 3-D volume.
+Contains two parts:
+  1. Register individual areas into whole brain coronal sections using DAPI channel.
+  2. Register individual brain section into a 3-D volume.
+
+
+## combineBC_8C
+
 
 ## (Optional) flatmap_2
 Construct flatmap using Allen CCF.
