@@ -5447,7 +5447,8 @@ classdef TBS % Terminal BARseq
         
         %% Function:    combineSeq2abTform
         % Discription:  combine tform from the same image (median)
-        function tbl = combineSeq2abTform(tbl,tileTformName,nameElement,sysSetting,directory)
+        function tbl = combineSeq2abTform(tbl,tileTformName,nameElement,...
+                sysSetting,directory)
             % Input & output:   tbl, table, with fixName & tform
             %               tileTformName, str, var name for stitching tile
             %               into image
@@ -5496,9 +5497,11 @@ classdef TBS % Terminal BARseq
                 movingName = movingName(row);
                 iTbl = iTbl(row,:);
                 
+                % tform in stitched imageg
                 iTileTform = tileTform.tform(movingName);
                 
                 % Combine with the tile stitch tform
+                % (need to reverse stitch tform before add the new tform)
                 tform = iTbl.tform;
                 tform = cellfun(@(X,Y) inv(X)*Y,iTileTform,tform,...
                     'UniformOutput',false);
@@ -5542,14 +5545,14 @@ classdef TBS % Terminal BARseq
             % Channel number of seq image
             nCh = imageSetting.chNum;
             
-            % Sequencing image for ab output
+            % Sequencing image stack number for ab output
             slide = (seq-1).*nCh +(1:nCh)';
             slide = reshape(slide,1,[]);
             
             [fixName,~,ic] = unique(seq2abTform.fixName);
             
             % Loop through the stiched image
-            for i = [4 8]%1:numel(fixName)
+            for i = 1:numel(fixName)
                 iFixName = fixName{i};
                 
                 % Find the rows with the current fix image
@@ -5636,6 +5639,7 @@ classdef TBS % Terminal BARseq
             % Get inqury value
             Vq = [];
             for i = 1:size(V,2)
+                % (return to object)
                 iVq = scatteredInterpolant(X,Y,V(:,i));
                 
                 Vq(:,i) = iVq(Xq,Yq);
@@ -5660,7 +5664,7 @@ classdef TBS % Terminal BARseq
             im = reshape(im,[],2);
             xy = reshape(xy,[],2);
             
-            % Interp using within range pixels (return to object)
+            % (return to object)
             Vx = scatteredInterpolant(xy(I,1),xy(I,2),im(I,1));
             Vy = scatteredInterpolant(xy(I,1),xy(I,2),im(I,2));
             
@@ -5670,36 +5674,11 @@ classdef TBS % Terminal BARseq
             
             im = cat(3,Vx,Vy);
         end
-        
-        %% Function:    interp2nonzeros
-        % Discription:  get grid data by interperlating nonzero datapoints
-        function im = interp2nonzeros2(im)
-            % Input & output:   im, m*n*2 mat, displacement field
-            
-            sz = size(im);
-            x = 1:sz(2); y = 1:sz(1);
-            [x,y] = meshgrid(x,y);
-            xy = cat(3,x,y);
-            
-            % Within range pixels
-            I = im == 0;
-            I = ~any(I,3);
-            
-            im = reshape(im,[],2);
-            xy = reshape(xy,[],2);
-            
-            % Interp using within range pixels
-            % (Use range to speed up version)
-            Vxy = TBS.scatteredInterpolantRng(xy(I,1),xy(I,2),im(I,:),xy(~I,1),xy(~I,2),50);
-            
-            im(~I,:) = Vxy;
-            im = reshape(im,sz);
-            
-        end
-        
+                
         %% Function:    tform2D
         % Discription:  tform object to displacement field (D)
         function D = tform2D(tform,sz)
+            % 03272022, checked with imwarp
             % Input:    tform, MATLAB tform object, can work with
             %           non-rigid transformation object
             %           sz, mat, size of output (i.e. fix image)
@@ -5718,7 +5697,7 @@ classdef TBS % Terminal BARseq
             V = TBS.interp2nonzeros(V);
             
             % Compute difference: displacement field
-            D = V - U;
+            D = V - U;                      
         end
         
         %% Function:    Doperation
@@ -5735,6 +5714,8 @@ classdef TBS % Terminal BARseq
             xy = cat(3,x,y);
             
             % D1 & D2-transformed pixel location
+            % For example: original pixel location, xy; V1, pixel location
+            % after D1
             V1 = D1 + xy;
             V2 = D2 + xy;
             
@@ -5746,10 +5727,9 @@ classdef TBS % Terminal BARseq
             V = TBS.interp2nonzeros(V);
             
             % Calculate displacement field
-            D = V - xy;
-            
+            D = V - xy;            
         end
-        
+       
         %% Function:    transformPointsForwardD
         % Discription:  transform points forward using displacement field
         function X = transformPointsForwardD(D,U,rng)
@@ -5765,8 +5745,11 @@ classdef TBS % Terminal BARseq
             xy = cat(3,x,y);
             
             % Pixel location in transformed image
+            % D: where current location came from
             % xy: current pixel location, value, original pixel location
-            V = D + xy;
+            % Note, this & inverseD may be counter intuitive, do a
+            % checkboard and tform to check
+            V = xy + D;
             
             % Get grid of before-after transform
             % (Use range to speed up)
@@ -5789,8 +5772,11 @@ classdef TBS % Terminal BARseq
             xy = cat(3,x,y);
             
             % Pixel location in transformed image
+            % D: where current location came from
             % xy: current pixel location, value, original pixel location
-            V = D + xy;
+            % Note, this & forwardD may be counter intuitive, do a
+            % checkboard and tform to check
+            V = xy + D;
             
             % Get the original pixel location by interpolation
             Xq = X(:,1); Yq = X(:,2);
@@ -5803,7 +5789,8 @@ classdef TBS % Terminal BARseq
         %% Function:    thresholdD
         % Discription:  thresholding selective displacement field
         function D = thresholdD(D, threhold)
-            % Input & output:   D, m*n*2 mat, displacement field
+            % Input & output:   D, cell, each cell contains m*n*2,
+            % displacement field
             %           threshold, cell, threshold for each
             %           transformation method
             
@@ -6028,7 +6015,7 @@ classdef TBS % Terminal BARseq
         end
         
         %% Function:    SA_getImage4Alignment
-        % Discription:  get images for alignment
+        % Discription:  get images for alignment, intensity adjusted
         function im = SA_getImage4Alignment(directory,imName,...
                 ch4Align,scaleFactor)
             % Input:    directory, str, directory of the image
@@ -6048,6 +6035,7 @@ classdef TBS % Terminal BARseq
             % Scale down for fast computation
             im = imresize(im,scaleFactor);
             
+            % Subtract background
             minInten = prctile(nonzeros(im),5);
             im = im - minInten;
             
@@ -6062,7 +6050,7 @@ classdef TBS % Terminal BARseq
             % Input:        startSeq, num, starting seq number
             %               outputStruct, struct, for output
             %               selfAlignmentSetting, struct, settings for the alignment
-            % Output:       outputStruct
+            % Output:       selfAlignTform, (the tform and D are scaled)
             
             % Settings
             % ch4Align, imageSetting, directory, sysSetting,
@@ -8967,6 +8955,8 @@ classdef TBS % Terminal BARseq
         % Discription:  fill the empty space between reference values
         function refCtx = fillRefCtx(refCtx,ctx)
             % Note, use 7 pixel ball
+            % quickly tried scatteredInterpolant to fill cortex, 
+            % no significant different by eye
             % Input & output: reference cortex, mat
             %           ctx, logical stack, cortical area
             
