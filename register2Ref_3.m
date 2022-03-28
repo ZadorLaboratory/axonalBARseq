@@ -488,7 +488,9 @@ end
 
 save(fullfile(directory.main,'somaLocationRef.mat'),'somaLocation');
 
-%% Fig & supFig. Rolony location visualization ============================
+%% Fig & supFig. Barcode location visualization ===========================
+% Note: including both rolony and soma
+
 cd(directory.main);
 load('somaBCref.mat'); load('axonBCref.mat');
 
@@ -504,7 +506,7 @@ n = accumarray(ic,1);
 sz = size(annoMap);
 R = imref3d(sz);
 
-%% Fig 1. Rolony location in registered volume ----------------------------
+%% Fig 1. Barcode location in registered volume ----------------------------
 % Register moving volume
 tfMoving = imwarp(moving,tform,'OutputView',R);
 tfMoving = imwarp(tfMoving,D);
@@ -523,7 +525,7 @@ test = cat(3,outline,tfMoving,test);
 MIJ.createImage(test);
 MIJ.run("Stack to Hyperstack...", "order=xyzct channels=3 slices=528 frames=1 display=Composite");
 
-%% SupFig. Rolony on flatmap ===============================================
+%% SupFig. Barcode on flatmap ===============================================
 
 cd(directory.main);
 if ~exist('ctxAP') || ~exist('ctxML') || ~exist('ctxDepthPrctile')
