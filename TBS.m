@@ -6144,7 +6144,7 @@ classdef TBS % Terminal BARseq
         end
         
         %% Function:    hammingDist2
-        % Discription:  calculate hamming distance to BC1 of BC2
+        % Discription:  calculate BC2 to BC1 hamming distance 
         function D = hammingDist2(BC1,BC2,tolerate0)
             % Note: 08042021 no row sum of BC2
             % tried split into blocks, not faster
@@ -6199,15 +6199,14 @@ classdef TBS % Terminal BARseq
         end
         
         %% Function:    randBC
-        % Discription:  get random unique BC
-        function bc = randBC(nBC,nSeq,n,maxHamming)
+        % Discription:  get random unique BC (with exlcusion option)
+        function bc = randBC(nBC,nSeq,n,minDiffCh)
             % Input:    nBC, num, number of barcode
             %           nSeq, num, number of nt per barcode
             %           n, number, digit of degenerated barcode
-            %           maxHamming,num,
+            %           minDiffCh,num, min digits of the other two channels
             % Output:   bc, barcode matrix
-            
-            
+                        
             nBC2 = nBC * 1.5;
             
             % Random unique BC matrix
@@ -6223,15 +6222,15 @@ classdef TBS % Terminal BARseq
             end
             
             % Exclude BC have only certain channels
-            if ~isempty(maxHamming)
+            if ~isempty(minDiffCh)
                 % Ch 1 & 2
                 TF = ismember(bc,[0 1 2]);
-                TF = sum(~TF,2) > maxHamming;
+                TF = sum(~TF,2) >= minDiffCh;
                 bc = bc(TF,:);
                 
                 % Ch3 & 4
                 TF = ismember(bc,[0 3 4]);
-                TF = sum(~TF,2) > maxHamming;
+                TF = sum(~TF,2) >= minDiffCh;
                 bc = bc(TF,:);
             end
                         
@@ -6629,7 +6628,8 @@ classdef TBS % Terminal BARseq
         end
               
         %% Function:    mergeAxonBC 
-        % Discription:  merge codeBook BC using axon count
+        % Discription:  merge codeBook BC within hamming distance using
+        % axon count
         function TF = mergeAxonBC(codeBook,axonBCn,mergeHamming)
             % Input:    codeBook, mat, template barcode
             %           axonBCn, table, axonBC count
@@ -6793,6 +6793,8 @@ classdef TBS % Terminal BARseq
         function lookupTbl = codeLookup(BCin,codeBook,maxHamming,...
                 minBCcount,tolerate0)
             % 08252021, added seperate method for matching identical BC
+            % Note, for identical, 0 can match to any nt; for
+            % non-identical, 0 can be treated as a mismatch
             % Input:    BCin, mat/cell, input BC
             %           codeBook, mat, one template BC per row
             %           maxHamming, num, maximum hamming distance
@@ -6822,6 +6824,7 @@ classdef TBS % Terminal BARseq
             % Match identical BC, with 0 tolerance ------------------------
 
             % unmatchBC, exclude single & multiple matched BC
+            % BCq, BC of inquery
             % [BCq,templateBC,unmatchBC] = codeLookupIdem(BCin,codeBook)
             [BCq,templateBC,BCin] = TBS.codeLookupIdem(BCin,codeBook);
             
@@ -6988,25 +6991,25 @@ classdef TBS % Terminal BARseq
             BC1 = dotId(I,:);
             
             % 08132021:Change from unique to hamming distance
-            dotId2 = [];  hammingMat = false;
-            while ~isempty(hammingMat)
+            dotId2 = [];  simHammingMat = false;
+            while ~isempty(simHammingMat)
                 
-                % Hamming distance matrix ---------------------------------
+                % Similarity matrix (using hamming distance) --------------
                 % Not tolerate 0 besides itself
                 BC2 = permute(BC1,[3 2 1]);
-                hammingMat = BC1 == BC2 & BC1 ~= 0;
-                hammingMat = sum(hammingMat,2);
-                hammingMat = squeeze(hammingMat);
+                simHammingMat = BC1 == BC2 & BC1 ~= 0;
+                simHammingMat = sum(simHammingMat,2);
+                simHammingMat = squeeze(simHammingMat);
                 
                 % Set itself to nSeq
-                eyeTF = logical(eye(size(hammingMat)));
-                hammingMat(eyeTF) = nSeq;
+                eyeTF = logical(eye(size(simHammingMat)));
+                simHammingMat(eyeTF) = nSeq;
                 
                 % Find the first hamming distance -------------------------
                 % Faster use loop than unique & sortrows
-                hamming1 = zeros(size(hammingMat,1),1);
-                for i = 1:size(hammingMat,2)
-                    [~,~,v] = find(hammingMat(:,i),1,'first');
+                hamming1 = zeros(size(simHammingMat,1),1);
+                for i = 1:size(simHammingMat,2)
+                    [~,~,v] = find(simHammingMat(:,i),1,'first');
                     hamming1(i) = v;
                 end
                 
@@ -7027,6 +7030,8 @@ classdef TBS % Terminal BARseq
         %% Function:    correctAxonBC
         % Discription:  correct and trim axonBC table
         function axonBC = correctAxonBC(axonBC,bcSetting)
+            % Input & output: axonBC, table
+            %           bcSetting, struct            
             
             stat = sum(cellfun(@(X) size(X,1),axonBC.bscallCh));
             
@@ -7079,9 +7084,10 @@ classdef TBS % Terminal BARseq
                 % Number of mismatch
                 D = iBscallCh == iBC | iBscallCh == 0 | iBC == 0;
                 D = sum(~D,2);
-                D = D + 1;
                 
                 % Count mismatch
+                % Add 1 for accuarray
+                D = D + 1;     
                 D = accumarray(D,1,[nSeq+1,1]);
                 stat(:,i) = D;
             end
@@ -7097,10 +7103,11 @@ classdef TBS % Terminal BARseq
             
             TBS.extractStructVar(bcSetting,'caller');
             
-            TF = true(size(codebook,1),1);
+            nBC = size(codebook,1);
+            TF = true(nBC,1);
             
             % Function handle for BC count
-            fh = @(X) accumarray(vertcat(X{:}),1);
+            fh = @(X) accumarray(vertcat(X{:}),1,[nBC 1]);
             
             % Trim out BC with too few axon count ------------------------
             n = fh(axonBC.codeID);
@@ -7205,8 +7212,8 @@ classdef TBS % Terminal BARseq
                 D = D(2,:); I = I(2,:); % Exclude itself
                 D = D'; I = I';
                 
-                % Find rolony within the range, from the same seciton but different
-                % image (get the one from later image to delete)
+                % Find rolony within the range, from the same seciton but 
+                % different image (get the one from later image to delete)
                 % Same section: z; distance within threhold
                 iTF = D < threshold & ixyz(:,3) == ixyz(I,3) & iIm > iIm(I);
                 
@@ -7467,127 +7474,8 @@ classdef TBS % Terminal BARseq
                 num2str(numel(TF))]);            
         end
         
-        %% Function:    sBCcount
-        % Discription:  barcode count for section or slide
-        function [BCcount,sectionRegion] = sBCcount(tbl,str,imageSetting,sysSetting)
-            % Input:    tbl, table, one image per row, with codeID
-            %           str, 'section'/'slide', barcode count for section
-            %           or slide
-            %           imageSetting/sysSetting, struct
-            % Output:   BCcount, mat, BC count per BC per section per
-            % region. 2nd-D is the section number
-            %           sectionRegion, cell, region name along the 3rd-D
-            
-            sectionLoc = imageSetting.sectionLoc;
-            mouseID = imageSetting.mouseID;
-            
-            imName = tbl.Properties.RowNames;
-            % Section/slide number
-            switch str
-                case 'section'
-                    sNum = TBS.getSectionNumber(imName,imageSetting,sysSetting);
-                    
-                case 'slide'
-                    sNum = cellfun(@(X) TBS.getSlideNumLoc(X,sysSetting,sectionLoc),imName);
-                    
-                    % Fix slide number according for this mouse
-                    sNum = TBS.mouseSlideNum(sNum,mouseID);
-            end
-            
-            % BC count for each image -------------------------------------
-            % number of BC
-            nBC = vertcat(tbl.codeID{:});
-            nBC = max(nBC);
-            
-            BCid = tbl.codeID;
-            BCid = cellfun(@(X) accumarray(X,1,[nBC 1]),BCid,'UniformOutput',false);
-            
-            % BC count per BC per section per region ----------------------
-            % Get region
-            sectionRegion = cellfun(@(X) TBS.nameFun(X,2,sysSetting),...
-                imName,'UniformOutput',false);
-            sectionRegion = erase(sectionRegion,sysSetting.imFormat);
-            [sectionRegion,~,ic] = unique(sectionRegion);
-            
-            % One BC per row; one colume per section; 3rd D per region
-            BCcount = zeros(nBC,max(sNum),numel(sectionRegion));
-            for i = 1:numel(sectionRegion)
-                % Row number of this region
-                row = ic == i;
-                row = find(row);
-                
-                % Section and slide number
-                iSNum = sNum(row);
-                
-                [iSNum,~,ic2] = unique(iSNum);
-                
-                % BCcount of the region in this section/slide
-                iBCid = {};
-                for j = 1:numel(iSNum)
-                    
-                    row2 = ic2 == j;
-                    row2 = row(row2);
-                    iBCid{1,j} = BCid(row2);
-                end
-                
-                iBCid = cellfun(@(X) horzcat(X{:}),iBCid,'UniformOutput',false);
-                iBCid = cellfun(@(X) sum(X,2),iBCid,'UniformOutput',false);
-                
-                % col: slide/section number
-                iBCid = horzcat(iBCid{:});
-                
-                BCcount(:,iSNum,i) = iBCid;
-            end
-        end
-        
-        %% Function:    floatingStat
-        % Discription:  flating rolony stats, compare counts between soma
-        % section and its neigbors
-        function stat = floatingStat(axonBC,somaSection,nearbyN,imageSetting,sysSetting)
-            % Input:    axonBC, table,
-            %           nearbyN, num, nearby N-slide from the soma
-            %           somaSlide, vector, section number with soma 
-            %           imageSetting/sysSetting, struct
-            % Output:   stat, mat, difference of BC count between soma and
-            % its neigboring sections
-            
-            % BC count per slide ('slide'/'section')
-            % One BC per row; col, slide/section; 3rd, region
-            [BCcount,sectionRegion] = TBS.sBCcount(axonBC,'section',imageSetting,sysSetting);
-            
-            % Section number difference to soma
-            % col: slide number; one row per BC
-            x = repmat(1:size(BCcount,2),size(BCcount,1),1);
-            x = x - somaSection;
-            
-            % Note, 0.5 will be rounded to interger
-            x = round(x);
-            
-            stat = [];
-            for i = 1:size(BCcount,3)
-                
-                for j = 1:size(BCcount,1)
-                    % Difference to the soma section
-                    jx = x(j,:);
-                    jBCcount = BCcount(j,:,i);
-                    
-                    % Get axonBC count on soma and nearby slides
-                    jSoma = jx == 0;
-                    jNearby = abs(jx)<= nearbyN;
-                    jNearby = jNearby & ~jSoma;
-                    
-                    jSoma = jBCcount(jSoma);
-                    % Cannot use median, it is easy to be 0
-                    jNearby = mean(jBCcount(jNearby));
-                    
-                    % Cannot use /, the jNearby can be 0
-                    stat(j,i) = jSoma-jNearby;
-                end
-            end            
-        end
-        
         %% Function:    delCloseDot
-        % Discription:  delete dots close to gether
+        % Discription:  delete dots close together within an image
         function im = delCloseDot(im,rng)
             % Note, the script likely has bias
             % Input & output:   im
@@ -7666,8 +7554,7 @@ classdef TBS % Terminal BARseq
             % Filter 2: disk filter
             % Filter for rolony cover area
             SE2 = strel('disk',dia);
-            
-            
+                        
             % Slide range for soma
             somaSectionRnge = bcSetting.somaSectionRnge;            
             % Function handle of slide within the soma range
@@ -7938,51 +7825,7 @@ classdef TBS % Terminal BARseq
             
             disp(['Found glia: ',num2str(sum(TF)), ' in ',num2str(size(TF,1))]);
         end
-                
-        %% Function:    regionCountFilter
-        % Discription:  exclude projected region below threhold
-        function axonBC = regionCountFilter(axonBC,minCount,selectRegion,...
-                imageSetting,sysSetting)
-            
-            % BC count per section
-            [BCcount,sectionRegion] = TBS.sBCcount(axonBC,'section',imageSetting,sysSetting);
-            
-            % Only include the selective region
-            if ~isempty(selectRegion)
-                selectRegion = ismember(sectionRegion,selectRegion);
-                
-                sectionRegion = sectionRegion(selectRegion);
-                BCcount = BCcount(:,:,selectRegion);
-            end
-            
-            sectionRegion = cellfun(@(X) ['_',X,'.'],sectionRegion,'UniformOutput',false);
-            
-            % BC count of the region
-            n = sum(BCcount,2);
-            n = squeeze(n);
-            n = n >= minCount;
-            
-            for i = 1:numel(sectionRegion)
-                imName = axonBC.Properties.RowNames;
-                row = contains(imName,sectionRegion{i});
-                row = find(row);
-                
-                % codeID beyond threshold
-                id = n(:,i);
-                id = find(id);
-                
-                % Delete id less than threshold
-                TF = axonBC.codeID(row);
-                TF = cellfun(@(X) ismember(X,id),TF,'Uniformoutput',false);
-                
-                for j = 1:size(TF,1)
-                    irow = row(j);
-                    axonBC{irow,:} = cellfun(@(X) X(TF{j},:),...
-                        axonBC{irow,:} ,'UniformOutput',false);
-                end
-            end
-        end
-        
+                       
         %% Function:    exclBCinROI
         % Discription:  excle barcodes within ROI
         function BCtable = exclBCinROI(roi,BCtable,varName)
@@ -8098,6 +7941,7 @@ classdef TBS % Terminal BARseq
             
             [~,~,ic] = unique(id);
             
+            % Loop across regions, find rolony doesnt match the criteria
             TF = [];
             for i = 1:numel(regVoxel)
                 iReg = regVoxel{i};
@@ -8129,8 +7973,7 @@ classdef TBS % Terminal BARseq
             for i = 1:size(axonBC,1)
                 axonBC{i,:} = cellfun(@(X) X(~TF{i},:),axonBC{i,:},...
                     'UniformOutput',false);
-            end
-            
+            end            
         end
         
         %% Function:    imBCid (for validation)
