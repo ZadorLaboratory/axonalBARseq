@@ -39,6 +39,7 @@ Contains two parts:
 
 
 ## combineBC_8C
+Construct codebook and lookup table, exclude nonspecific barcodes.
 
 
 ## (Optional) flatmap_2
