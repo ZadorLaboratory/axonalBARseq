@@ -1,6 +1,7 @@
-clc; %return
-% clear
+clc;
+clear
 
+% Settings
 directory = [];
 directory.main = 'D:\Li Yuan';
 
@@ -105,6 +106,8 @@ end
 codeBook0 = codeBook;
 
 % Codebook with all barcodes 
+% Note 03292022, 0 is treated as mismatch for non-identical matching
+% codeLookup(BCin,codeBook,maxHamming,minBCcount,tolerate0)
 somaBCLookupTbl = TBS.codeLookup(somaBCVar.bscallCh,codeBook0,maxHamming,1,false);
 axonBCLookupTbl = TBS.codeLookup(axonBCVar.bscallCh,codeBook0,maxHamming,1,false);
 
@@ -140,10 +143,14 @@ disp(['Degenerate BC: ', num2str(sum(~TF)),', in total BC: ',num2str(numel(TF))]
 % Exclude BC have only certain channels ===================================
 % pick up Ch3 & 4 only dots in nucleus close to on the surface
 % 08312021, hamming > 2 instead 0, cannot match to ch12 or ch34 BC with
+% Due to the current illumina kit has bleed through between these two pair
+% of channels
+
+minDiffCh = 3;
 
 % Ch 1 & 2
 TF = ismember(codeBook,[0 1 2]);
-TF = sum(~TF,2) >= 3;%maxHamming;
+TF = sum(~TF,2) >= minDiffCh;
 codeBook = codeBook(TF,:);
 axonBC = TBS.updateCodeID(axonBC,TF);
 
@@ -152,7 +159,7 @@ disp(['Exclude BC with only Ch1&2: ', num2str(sum(~TF)),...
 
 % Ch3 & 4
 TF = ismember(codeBook,[0 3 4]);
-TF = sum(~TF,2) >=3;%maxHamming;
+TF = sum(~TF,2) >= minDiffCh;
 codeBook = codeBook(TF,:);
 axonBC = TBS.updateCodeID(axonBC,TF);
 
@@ -160,7 +167,7 @@ disp(['Exclude BC with only Ch3&4: ', num2str(sum(~TF)),...
     ', in total BC: ', num2str(numel(TF))]);
 
 % Exclude BC with low complete matches ====================================
-
+% 0 treated as a match
 % countMismatch(tbl,codeBook)
 stat = TBS.countMismatch(axonBC,codeBook);
 
@@ -218,7 +225,9 @@ disp(['Exclude 2nd infection BC: ', num2str(sum(~TF)),...
 % Delete same rolony image multiple times =================================
 % ver4e, Exclude same rolony from more than one image
 
+% regX/Y, pixel location registered to antibody section
 axonBC = TBS.registerXY2Vol(axonBC,scaleFactor,sysSetting,directory);
+% xyz, registered coordinates in micron
 axonBC = TBS.vol2micron(axonBC,imageSetting,sysSetting);
 
 % Test threshold for overlapping ------------------------------------------
@@ -315,10 +324,10 @@ gliaR = bcSetting.gliaR;
 % Get soma location% hasSoma(minCount,somaR,somaBC,somaImReg,imageSetting,sysSetting)
 TF50 = TBS.hasSoma(50,somaR,somaBC,somaIm,imageSetting,sysSetting);
 
-% Soma location for BC with soma
+% Soma location for BC with soma, xyz in micron
 somaLocation = TBS.getSomaLoc(somaBC,somaIm,imageSetting,sysSetting);
 
-% Soma location for BC without soma
+% Soma location for BC without soma, median rolony location, xyz in micron
 axonBCcenter = TBS.getAxonBCcenterInj(axonBC,sysSetting);
 somaLocation(~TF50,:) = axonBCcenter(~TF50,:);
 
@@ -331,7 +340,7 @@ codeBook = codeBook(TF,:);
 axonBC = TBS.updateCodeID(axonBC,TF);
 somaBC = TBS.updateCodeID(somaBC,TF);
 
-% %% Codebook for analysis ==================================================
+% %% Codebook for analysis ================================================
 
 cd(directory.main);
 save('codeBook.mat','codeBook');
@@ -533,7 +542,8 @@ stat = [];
 stat(1,:) = mean(p,1);
 stat(2,:) = std(p,1,1);
 
-%% (Report) Model % BC within hamming distance ============================
+%% SupFig. Model % BC within hamming distance =============================
+% Percentage of barcode have different hamming distance
 
 nIteration = 100;
 nBC = 10000;
@@ -546,7 +556,7 @@ for i = 1:nIteration
     
     iD = TBS.hammingDist2(BC,[],false);
     
-    % Precentage of barcode with a part at each hammign distance
+    % Precentage of barcode with a partner at each hamming distance
     iD = sum(iD > 0,2)/nBC;
     
     D(:,i) = iD;
