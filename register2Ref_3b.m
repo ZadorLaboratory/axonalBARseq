@@ -379,8 +379,8 @@ load('reg2AllenTform.mat');
 tform = reg2AllenTform.tform;
 D = reg2AllenTform.D;
 
-% Register to reference map ===============================================
-% (This part is relatively slow)
+% % Register to reference map ===============================================
+% % (This part is relatively slow)
 % somaBC = TBS.vol2reg(somaBC,reg2AllenTform,scaleFactor,imageSetting,sysSetting);
 % axonBC = TBS.vol2reg(axonBC,reg2AllenTform,scaleFactor,imageSetting,sysSetting);
 % 
@@ -446,18 +446,19 @@ somaBC = TBS.updateCodeID(somaBC,TF);
 gliaR = bcSetting.gliaR;
 
 somaR = bcSetting.hasSoma.somaR;
+minCount = bcSetting.hasSoma.minSomaPixelCount;
 load('somaIm.mat');
 
 % Get soma location
 % hasSoma(minCount,somaR,somaBC,somaImReg,imageSetting,sysSetting)
-TF50 = TBS.hasSoma(50,somaR,somaBC,somaIm,imageSetting,sysSetting);
+TF80 = TBS.hasSoma(minCount,somaR,somaBC,somaIm,imageSetting,sysSetting);
 
 % Soma location for BC with soma
 somaLocation = TBS.getSomaLoc(somaBC,somaIm,imageSetting,sysSetting);
 
 % Soma location for BC without soma
 axonBCcenter = TBS.getAxonBCcenterInj(axonBC,sysSetting);
-somaLocation(~TF50,:) = axonBCcenter(~TF50,:);
+somaLocation(~TF80,:) = axonBCcenter(~TF80,:);
 
 % Whether its a glia cell
 TF = TBS.isGlia(somaLocation,axonBC,gliaR,bcSetting.minAxonCount);
@@ -468,6 +469,7 @@ codeBook = codeBook(TF,:);
 axonBC = TBS.updateCodeID(axonBC,TF);
 somaBC = TBS.updateCodeID(somaBC,TF);
 
+save(fullfile(directory.main,'codeBookref.mat'),'codeBook');
 save(fullfile(directory.main,'somaBCref.mat'),'somaBC');
 save(fullfile(directory.main,'axonBCref.mat'),'axonBC');
 
@@ -475,11 +477,11 @@ save(fullfile(directory.main,'axonBCref.mat'),'axonBC');
 % Save the register soma location as variable for analysis
 
 % Soma location
-TF50 = TBS.hasSoma(50,somaR,somaBC,somaIm,imageSetting,sysSetting);
+TF80 = TBS.hasSoma(minCount,somaR,somaBC,somaIm,imageSetting,sysSetting);
 
 % Delete the location doesnt have enough pixels
 somaLocation = TBS.getSomaLoc(somaBC,somaIm,imageSetting,sysSetting);
-somaLocation(~TF50,:) = 0;
+somaLocation(~TF80,:) = 0;
 
 % Find the xyzRef info of the soma locaiton pixel
 id = vertcat(somaBC.codeID{:});

@@ -733,7 +733,7 @@ classdef TBS % Terminal BARseq
             % Soma radius range
             bcSetting.hasSoma.somaR = 100;
             % Min pixel count within radius
-            bcSetting.hasSoma.minSomaPixelCount = 50;
+            bcSetting.hasSoma.minSomaPixelCount = 80;
             
             % Setting for rolony correction -------------------------------
             % max same dot dotID for different dot
@@ -7994,6 +7994,7 @@ classdef TBS % Terminal BARseq
             
             x = x(:,iSeq); y = y(:,iSeq);
             
+            % Image size
             sz = [max(y),max(x)];
             sz = ceil(sz);
             

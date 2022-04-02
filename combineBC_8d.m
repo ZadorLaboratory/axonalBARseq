@@ -269,7 +269,7 @@ somaBC = TBS.registerXY2Vol(somaBC,scaleFactor,sysSetting,directory);
 somaBC = TBS.vol2micron(somaBC,imageSetting,sysSetting);
 
 % BC with soma
-TF50 = TBS.hasSoma(minCount,somaR,somaBC,somaIm,imageSetting,sysSetting);
+TF80 = TBS.hasSoma(minCount,somaR,somaBC,somaIm,imageSetting,sysSetting);
 
 % Soma slide 
 somaSection = TBS.getSomaSection(somaBC,somaIm,imageSetting,sysSetting);
@@ -286,20 +286,20 @@ floatSection = TBS.findFloatSlide(axonBC,floatThreshold,regionName,...
                 bcSetting,imageSetting,sysSetting);
 
 % (Report) Positive & accuracy test for BC with soma ----------------------
-I = TF50 & ~isnan(floatSection) & floatSection ~= 0;
+I = TF80 & ~isnan(floatSection) & floatSection ~= 0;
 
 err = somaSection(I)-floatSection(I);
 err = abs(err) <= 1;
 
 disp('Positive & accuracy rate: ')
-disp([sum(I)/sum(TF50), sum(err)/sum(I)]);
+disp([sum(I)/sum(TF80), sum(err)/sum(I)]);
 
 % (Report) Positive rate in BC without soma -------------------------------
 
-TF = ~TF50 & ~isnan(floatSection) & floatSection ~=0;
+TF = ~TF80 & ~isnan(floatSection) & floatSection ~=0;
 
 disp('BC without soma: positive and total: ');
-disp([sum(TF), sum(~TF50)])
+disp([sum(TF), sum(~TF80)])
 
 % (Report) Test accuracy in soma-negative cells ---------------------------
 % Coordinate: xyz in volume space (self-aligned)
@@ -307,7 +307,7 @@ disp([sum(TF), sum(~TF50)])
 testTF = false; % whether start test
 
 % Cells for testing floating sections
-TF = ~TF50 & ~isnan(floatSection) & floatSection ~=0;
+TF = ~TF80 & ~isnan(floatSection) & floatSection ~=0;
 I = find(TF);
 
 if testTF
@@ -347,7 +347,7 @@ end
 % Delete floating rolonies ------------------------------------------------
 % Sections to be deleted
 delSection = somaSection;
-delSection(~TF50) = floatSection(~TF50);
+delSection(~TF80) = floatSection(~TF80);
 
 axonBC = TBS.delFloatingRolony(delSection,axonBC,regionName,...
     imageSetting,sysSetting);
@@ -365,14 +365,14 @@ somaBC = TBS.updateCodeID(somaBC,TF);
 gliaR = bcSetting.gliaR;
 
 % Get soma location% hasSoma(minCount,somaR,somaBC,somaImReg,imageSetting,sysSetting)
-TF50 = TBS.hasSoma(50,somaR,somaBC,somaIm,imageSetting,sysSetting);
+TF80 = TBS.hasSoma(minCount,somaR,somaBC,somaIm,imageSetting,sysSetting);
 
 % Soma location for BC with soma, xyz in micron
 somaLocation = TBS.getSomaLoc(somaBC,somaIm,imageSetting,sysSetting);
 
 % Soma location for BC without soma, median rolony location, xyz in micron
 axonBCcenter = TBS.getAxonBCcenterInj(axonBC,sysSetting);
-somaLocation(~TF50,:) = axonBCcenter(~TF50,:);
+somaLocation(~TF80,:) = axonBCcenter(~TF80,:);
 
 % Whether its a glia cell
 TF = TBS.isGlia(somaLocation,axonBC,gliaR,bcSetting.minAxonCount);
@@ -390,6 +390,11 @@ save('codeBook.mat','codeBook');
 save('somaBC.mat','somaBC'); save('axonBC.mat','axonBC');
 
 return
+
+%% Analysis ========================================================================
+
+cd(directory.main);
+load('codeBookref.mat'); load('somaBCref.mat'); load('axonBCref.mat');
 
 %% (Report) Difference between soma and neigboring slides =================
 
@@ -441,7 +446,7 @@ end
 D = D.*100;
 stat = [mean(D,2),std(D,0,2)];
 
-%% Fig 1. NT proportion in BC
+%% SupFig. NT proportion in BC
 
 nCh = imageSetting.chNum;
 
@@ -465,7 +470,8 @@ stat = sum(TF);
 disp(['BC with correct fix NT: ',num2str(stat),newline,...
     'Precentage: ', num2str(stat/size(TF,1))]);
 
-%% Fig 1. Hamming distance
+%% SupFig. Hamming distance
+% Exclude fixed nt in library, compared to random barcode
 
 nIteration = 100;
 nBC = 10000;
@@ -489,17 +495,14 @@ Dmat = TBS.hammingDist2(codeBook2,[],true);
 Dmat = sum(Dmat,2);
 Dmat = Dmat./sum(Dmat).*100;
 
-%% (Check) Codebook with 0
+%% (Report) Codebook with 0
 % Get row number for codes with 0, for mannual validation
 
 row = sum(codeBook == 0,2);
 disp('Rows in codebook with 0: ')
 row = find(row)
 
-%% (Report) Soma and axon BC count
-
-% cd(directory.main);
-% load('axonBC.mat'); load('somaBC.mat');
+%% SupFig. Soma and axon BC count
 
 axonN = vertcat(axonBC.codeID{:});
 axonN = accumarray(axonN,1);
@@ -507,9 +510,13 @@ axonN = accumarray(axonN,1);
 somaN = vertcat(somaBC.codeID{:});
 somaN = accumarray(somaN,1);
 
+% Soma positive
+TF = any(somaLocation,2);
+
 % Soma & axon barcode count
 % For correlation & histogram
 stat = [somaN, axonN];
+stat = [{stat(TF,:)},{stat(~TF,:)}];
 
 disp(['Total axonBC count:',num2str(sum(axonN))]);
 disp(['Median axonBC count:',num2str(median(axonN))]);
@@ -530,23 +537,24 @@ stat = cumsum(stat,1);
 if isequal(tbl,axonBC)
     stat = [mean(stat,2),std(stat,0,2)];
 else
+    TF = any(somaLocation,2);
     % Only include BC with soma
-    stat = [mean(stat(:,TF50),2),std(stat(:,TF50),0,2)];
+    stat = [mean(stat(:,TF),2),std(stat(:,TF),0,2)];
 end
 
-%% (Check) soma bscalling percentage ======================================
+%% (Report) soma bscalling percentage =====================================
 % Discirption: check how many cells were included in the data
 
 cd(directory.main);
-% load('codeBook.mat'); load('somaBC.mat'); 
+
 threshold = 300;
 
 % Mannually identify image to check
-i = 31;
+i = 6;
 
-% imName = somaBC.Properties.RowNames{i};
+imName = somaBC.Properties.RowNames{i};
 
-imName = 'EF65ASlide23L_Injection.tif';
+imName = 'EF65ASlide27L_Injection.tif';
 
 % Median intensity of bscalling channel across cycles
 im = somaIm.im{imName};
@@ -576,7 +584,6 @@ MIJ.run('Open...',idir);
 % Discirption: check how many cells were included in the data
 
 cd(directory.main);
-% load('codeBook.mat'); load('axonBC.mat');
 
 % Mannually identify image to check
 i = 47;
@@ -614,34 +621,24 @@ MIJ.createImage(im);
 %% (Check) soma location ==================================================
 
 cd(directory.main);
-% load('codeBook.mat'); load('somaBC.mat'); 
 
 % Settings
 
-% Soma location, 08112021
-% somaLoc = TBS.getSomaLoc(somaBCreg,somaIm,imageSetting,sysSetting);
-somaLocation = TBS.getSomaLoc(somaBC,somaIm,imageSetting,sysSetting);
+somaLocation2 = TBS.getSomaLoc(somaBC,somaIm,imageSetting,sysSetting);
 
-% SomaBC & axon count -----------------------------------------------------
-n = vertcat(somaBC.codeID{:});
-n = accumarray(n,1);
-
-n2 = vertcat(axonBC.codeID{:});
-n2 = accumarray(n2,1);
-
-% Test, sort using soma
-[~,I2] = sort(n,'descend'); 
+I = any(somaLocation,2);
+I = find(I);
 
 %% Check soma location & bscalling result for indivisual BC ---------------
 clc
 
 % Code ID to check (defined mannually)
-i = 5352 %I2(4)
+i = I(1605)
 
 % Find the register xyz belongs to the BC
 codeID = vertcat(somaBC.codeID{:});
 xyz = vertcat(somaBC.xyz{:});
-iCenter = somaLocation(i,:);
+iCenter = somaLocation2(i,:);
 
 TF = ismember(xyz,iCenter,'rows') & codeID == i;
 
@@ -662,8 +659,8 @@ disp(['Image name: ',imName,newline,newline,'BC: ', num2str(bc)]);
 
 % Image name and counts
 fh = @(X,Y) disp([X.Properties.RowNames(Y > 0), num2cell(Y(Y>0))]);
-TF = cellfun(@(X) sum(X == i),somaBC.codeID); fh(somaBC,TF);
-TF = cellfun(@(X) sum(X == i),axonBC.codeID); fh(axonBC,TF);
+% TF = cellfun(@(X) sum(X == i),somaBC.codeID); fh(somaBC,TF);
+% TF = cellfun(@(X) sum(X == i),axonBC.codeID); fh(axonBC,TF);
 
 % Local corrected image ---------------------------------------------------
 
@@ -672,14 +669,14 @@ cd(directory.main);
 idir = dir(['**/soma/',imName]);
 idir = ['path=[',fullfile(idir.folder,idir.name),']'];
 MIJ.run('Open...',idir);
-MIJ.run('Specify...', ['width=15 height=15 x=',num2str(xy(1)),' y=',num2str(xy(2)),' slice=4 centered']);
+MIJ.run('Specify...', ['width=150 height=150 x=',num2str(xy(1)),' y=',num2str(xy(2)),' slice=4 centered']);
 
 % Logical soma image ------------------------------------------------------
 
 im = TBS.imBCid(somaBC(imName,:));
 im = im == i;
 MIJ.createImage(uint8(im).*255);
-MIJ.run('Specify...', ['width=15 height=15 x=',num2str(xy(1)),' y=',num2str(xy(2)),' slice=4 centered']);
+MIJ.run('Specify...', ['width=150 height=150 x=',num2str(xy(1)),' y=',num2str(xy(2)),' slice=4 centered']);
 
 % %% Background subtracted soma Image ----------------------------------------
 % imName = somaBCreg.Properties.RowNames{TF2};
@@ -715,7 +712,6 @@ MIJ.run('Open...',idir);
 % Discirption: check how many cells were included in the data
 
 cd(directory.main);
-load('codeBook.mat'); load('axonBC.mat');
 
 % Image to check
 i = 10;
