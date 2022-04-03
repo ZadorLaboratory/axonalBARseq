@@ -259,7 +259,7 @@ axonBC = TBS.delSameRolonyDiffIm(axonBC,threshold);
 
 % Floating rolony ========================================================
 
-% Soma radius
+% Soma radius, in micron
 somaR = bcSetting.hasSoma.somaR;
 minCount = bcSetting.hasSoma.minSomaPixelCount;
 
@@ -391,15 +391,19 @@ save('somaBC.mat','somaBC'); save('axonBC.mat','axonBC');
 
 return
 
-%% Analysis ========================================================================
+%% Analysis ==============================================================================
 
 cd(directory.main);
 load('codeBookref.mat'); load('somaBCref.mat'); load('axonBCref.mat');
 
-%% (Report) Difference between soma and neigboring slides =================
+%% (For reference) Soma minmum pixel counts ===============================
+% Test how min pixel counts for soma affects soma-positive BC number
 
-% Find barcode with 50-500 pixel count soma 
-minCount = [50:50:550];
+% Radius for pixel count
+somaR = bcSetting.hasSoma.somaR;
+
+% Find barcode with 50-200 pixel count soma
+minCount = 50:10:200;
 
 TF0 = {};
 for i = minCount
@@ -407,12 +411,18 @@ for i = minCount
     TF0{end+1} = TBS.hasSoma(i,somaR,somaBC,somaIm,imageSetting,sysSetting);
 end
 
-%% (Report) Estimate degenerate BC ========================================
+% Soma+ barcode cell count
+stat = cellfun(@sum, TF0);
+stat = [minCount; stat]';
+% Plot in Prims
+
+%% (For reference) Estimate degenerate BC =================================
+% Estimate the length of degenerate BC (continous barcode)
 
 nIteration = 1000;  % iteration number
 nBC = 10000;        % BC number per iteration
 nSeq = 17;          % BC length
-n = 3:15; % continous N same base sequence
+n = 3:15;           % continous N same base sequence
 
 p = TBS.estimateDegenerateBC(nIteration,nBC,nSeq,n);
 
@@ -421,9 +431,12 @@ p = p.*100;
 stat = [];
 stat(1,:) = mean(p,1);
 stat(2,:) = std(p,1,1);
+stat = [n; stat]';
+% Plot in Prims
 
 %% SupFig. Model % BC within hamming distance =============================
 % Percentage of barcode have different hamming distance
+% For 65A, 1-hamming distance have chance <0.1%
 
 nIteration = 100;
 nBC = 10000;
@@ -503,6 +516,7 @@ disp('Rows in codebook with 0: ')
 row = find(row)
 
 %% SupFig. Soma and axon BC count
+% Divided into soma location +/- cells
 
 axonN = vertcat(axonBC.codeID{:});
 axonN = accumarray(axonN,1);
@@ -526,7 +540,7 @@ disp(['Median axonBC count:',num2str(median(axonN))]);
 % hamming distance
 
 tbl = axonBC;
-tbl = somaBC;
+% tbl = somaBC;
 
 stat = TBS.countMismatch(tbl,codeBook);
 % Precentage
@@ -580,21 +594,20 @@ idir = dir(['**/soma/',imName]);
 idir = ['path=[',fullfile(idir.folder,idir.name),']'];
 MIJ.run('Open...',idir);
 
-%% (Check) axon bscalling percentage ======================================
+%% (Report) axon bscalling percentage =====================================
 % Discirption: check how many cells were included in the data
 
 cd(directory.main);
 
 % Mannually identify image to check
-i = 47;
+i = 404;
 
 % Sequence for stitched image
 iSeq = 14;
 
 % Image name
-imName = 'EF65ASlide24L_Injection.tif';
-imName = 'EF65ASlide36R_Contra.tif';
-% imName = axonBC.Properties.RowNames{i}
+% imName = 'EF65ASlide24L_Injection.tif';
+imName = axonBC.Properties.RowNames{i}
 
 % Bscalled dots at selective seq
 im = TBS.imBCid(axonBC(imName,:),iSeq);
@@ -618,7 +631,8 @@ im = cat(3,im,im2);
 
 MIJ.createImage(im);
 
-%% (Check) soma location ==================================================
+%% (Report) soma bscalling & location accuracy ============================
+% Note: can do this with or without soma
 
 cd(directory.main);
 
@@ -633,7 +647,7 @@ I = find(I);
 clc
 
 % Code ID to check (defined mannually)
-i = I(1605)
+i = I(3604)
 
 % Find the register xyz belongs to the BC
 codeID = vertcat(somaBC.codeID{:});
@@ -659,10 +673,10 @@ disp(['Image name: ',imName,newline,newline,'BC: ', num2str(bc)]);
 
 % Image name and counts
 fh = @(X,Y) disp([X.Properties.RowNames(Y > 0), num2cell(Y(Y>0))]);
-% TF = cellfun(@(X) sum(X == i),somaBC.codeID); fh(somaBC,TF);
-% TF = cellfun(@(X) sum(X == i),axonBC.codeID); fh(axonBC,TF);
+TF = cellfun(@(X) sum(X == i),somaBC.codeID); fh(somaBC,TF);
+TF = cellfun(@(X) sum(X == i),axonBC.codeID); fh(axonBC,TF);
 
-% Local corrected image ---------------------------------------------------
+%% Local corrected image ---------------------------------------------------
 
 % Open directly in ImageJ to preserve the hyperstack
 cd(directory.main);
@@ -678,23 +692,9 @@ im = im == i;
 MIJ.createImage(uint8(im).*255);
 MIJ.run('Specify...', ['width=150 height=150 x=',num2str(xy(1)),' y=',num2str(xy(2)),' slice=4 centered']);
 
-% %% Background subtracted soma Image ----------------------------------------
-% imName = somaBCreg.Properties.RowNames{TF2};
-% idir = dir(['**/stitched/',imName]);
-% stack = TBS.getStack(fullfile(idir.folder,idir.name),[]);
-% sz = size(stack);
-% stack = reshape(stack,sz(1),sz(2),[],imageSetting.chNum);
-% 
-% stack = TBS.somaIntenNormalization(stack);
-% stack = TBS.somaBkgrdSubtraction(stack);
-% stack = TBS.somaIntenNormalization(stack);
-% 
-% stack = reshape(stack,sz);
-% MIJ.createImage(stack);
+%% (Report) Axon rolony accuracy -------------------------------------------
 
-%% (Check axon) -----------------------------------------------------------
-
-imName2 = 'EF65ASlide22R_Contra.tif';
+imName2 = 'EF65ASlide21R_Contra.tif';
 im = TBS.imBCid(axonBC(imName2,:),2);
 im = im == i;
 im = imdilate(im,strel('disk',4));
@@ -707,58 +707,3 @@ cd(directory.main);
 idir = dir(['**/stitched/',imName2]);
 idir = ['path=[',fullfile(idir.folder,idir.name),']'];
 MIJ.run('Open...',idir);
-
-%% (Check) axon bscalling Accuracy ========================================
-% Discirption: check how many cells were included in the data
-
-cd(directory.main);
-
-% Image to check
-i = 10;
-
-% Image name
-imName = axonBC.Properties.RowNames{i}
-
-tbl = axonBC(imName,:)
-
-% Open directly in ImageJ to preserve the hyperstack
-cd(directory.main);
-idir = dir(['**/stitched/',imName]);
-idir = ['path=[',fullfile(idir.folder,idir.name),']'];
-MIJ.run('Open...',idir);
-
-%% Select specific xy or row to check
-
-col = 2;
-
-j = 12;
-
-% Region center for checking the dots (i.e. injection center)
-% Need mannually identify the xy
-inputXY = [1650 1500]; 
-
-% Find the dot coordinates around the inputXY
-xy = [tbl.x{:}(:,1),tbl.y{:}(:,1)];
-[~,I] = pdist2(xy,inputXY,'euclidean','Smallest',20);
-
-% Dots to check
-j = I(j); disp(['Dot: ',num2str(j)]);
-
-xy = [tbl.x{:}(:,col),tbl.y{:}(:,col)];
-xy = xy(j,:);
-bc = tbl.codeID{:}(j); bc = codeBook(bc,:); disp(bc);
-
-MIJ.run('Specify...', ['width=15 height=15 x=',num2str(xy(1)),' y=',num2str(xy(2)),...
-    ' slice=',num2str(col),' centered']);
-
-%% Check rolony without soma
-
-% Codebook test1 for statistics
-axonBCLookupTbl = TBS.codeLookup(axonBCVar.bscallCh,codeBookTest1,0,1,false);
-axonBC = TBS.findCode(axonBCVar,axonBCLookupTbl,codeBookTest1);
-
-axonBC2 = {};
-parfor i = 1:size(axonBC,1) % parfor
-    axonBC2{i,1} = TBS.trimRepeatID(axonBC(i,:),bcSetting);
-end
-axonBC = vertcat(axonBC2{:});
