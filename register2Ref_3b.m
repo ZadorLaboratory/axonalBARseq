@@ -379,13 +379,13 @@ load('reg2AllenTform.mat');
 tform = reg2AllenTform.tform;
 D = reg2AllenTform.D;
 
-% % Register to reference map ===============================================
-% % (This part is relatively slow)
-% somaBC = TBS.vol2reg(somaBC,reg2AllenTform,scaleFactor,imageSetting,sysSetting);
-% axonBC = TBS.vol2reg(axonBC,reg2AllenTform,scaleFactor,imageSetting,sysSetting);
-% 
-% save(fullfile(directory.main,'somaBC.mat'),'somaBC');
-% save(fullfile(directory.main,'axonBC.mat'),'axonBC');
+% Register to reference map ===============================================
+% (This part is relatively slow)
+somaBC = TBS.vol2reg(somaBC,reg2AllenTform,scaleFactor,imageSetting,sysSetting);
+axonBC = TBS.vol2reg(axonBC,reg2AllenTform,scaleFactor,imageSetting,sysSetting);
+
+save(fullfile(directory.main,'somaBC.mat'),'somaBC');
+save(fullfile(directory.main,'axonBC.mat'),'axonBC');
 
 % Exclude barcode outside the brain =======================================
 roi = annoMap == 0;
@@ -507,6 +507,10 @@ save(fullfile(directory.main,'somaLocationRef.mat'),'somaLocation');
 
 cd(directory.main);
 load('somaBCref.mat'); load('axonBCref.mat');
+
+load('reg2AllenTform.mat');
+tform = reg2AllenTform.tform;
+D = reg2AllenTform.D;
 
 % Coordinates in 3D, um
 xyz = [somaBC.xyzRef; axonBC.xyzRef];
