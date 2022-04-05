@@ -730,7 +730,7 @@ classdef TBS % Terminal BARseq
             bcSetting.regionMinCount = 10;
             
             % Setting for isSoma ------------------------------------------
-            % Soma radius range
+            % Soma radius range, in micron
             bcSetting.hasSoma.somaR = 100;
             % Min pixel count within radius
             bcSetting.hasSoma.minSomaPixelCount = 80;
@@ -1079,39 +1079,7 @@ classdef TBS % Terminal BARseq
             D = pdist2(mlapdDot,injCenter);
             TF = D < localRng;
         end
-        
-        %% Function:    loadMLAPDim
-        % Discription:  load ctxML/AP/DepthPrctile image without fold in
-        % areas
-        function [ctxML, ctxAP, ctxDepthPrctile] = loadMLAPDim(directory,refSetting)
-            % Input:    directory, str, directory for ctxML/AP/DepthPrctile
-            % image
-            %           refSetting, struct
-            % Output:   ctxML/AP/DepthPrctile, image
-            
-            cd(directory);
-            load('ctxML.mat'); 
-            load('ctxAP.mat'); 
-            load('ctxDepthPrctile.mat');
-            
-            % Annotation map
-            annoMap = TBS.getRefMap('anno',refSetting);
-            
-            % Annotation structure
-            annoStruct = refSetting.annoStruct;          
-            
-            % Delete the fold in portion for better visualization
-            roi = {'Retrosplenial area, ventral part', ...
-                'Anterior cingulate area',...
-                'Retrosplenial area, dorsal part'};
-            id = cellfun(@(X) TBS.findAnnoID(annoStruct,X),roi,'Uniformoutput',false);
-            id = vertcat(id{:});
-            roi = ismember(annoMap,id);
-            
-            % Delete from ML/AP/Depth image
-            ctxML(roi) = 0; ctxAP(roi) = 0; ctxDepthPrctile(roi) = 0;
-        end
-        
+                        
     end
     
     methods (Static)    % File, folder and general BARseq function ========
@@ -7388,7 +7356,7 @@ classdef TBS % Terminal BARseq
             codeID = vertcat(somaBCreg.codeID{:});
             
             somaLoc = [];
-            for i = 1:max(codeID) % NO parfor, image table is too big
+            parfor i = 1:max(codeID) % parfor
                 
                 % Find the image name with soma location
                 row = sectionNumber == sectionNumberBC(i);
