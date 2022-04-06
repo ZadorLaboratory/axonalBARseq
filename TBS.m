@@ -9343,6 +9343,70 @@ classdef TBS % Terminal BARseq
             idx2(COI) = idx;
         end
         
+        %% Function:    getRolonyOnWholeIm
+        % Discription:  get rolony location and cell type on whole brain section
+        function im = getRolonyOnWholeIm(imName,varIn,cellType,ch,sysSetting,directory)
+            % Input:    imName, string,
+            %           varIn, table, soma/axon barcode info
+            %           cellType, vector, cell type index
+            %           ch, num, channel number for the whole brain image
+            %           sysSetting/directory, struct
+            % Output:   im, uint8 stack, rolony image and whole brain image
+            
+            % Background intensity for whole brain image
+            background = 100;
+            
+            % Table for alignment info from region to whole brain section
+            cd(directory.main)
+            corrSeq2abTform = load('corrSeq2abTform.mat');
+            corrSeq2abTform = corrSeq2abTform.corrSeq2abTform;
+            
+            % Ensure both table has same format of row names
+            imFormat = sysSetting.imFormat;
+            corrSeq2abTform = TBS.ensureRowNameAppend(corrSeq2abTform,imFormat);
+            varIn = TBS.ensureRowNameAppend(varIn,imFormat);
+            
+            % Ab image ----------------------------------------------------------------
+            fileInfo = dir(['**\',imName]);
+            im = TBS.getStack(fullfile(fileInfo.folder,imName),ch);
+            im = im - background;
+            % Convert to uint8 to speed up
+            im = uint8(im);
+            
+            % Rolony image ------------------------------------------------------------
+            % Sequencing ROI belongs to the same whole brain section
+            TF = ismember(corrSeq2abTform.fixName,imName);
+            rowName = corrSeq2abTform.Properties.RowNames(TF);
+            
+            % BC coordinates
+            x = varIn.x(rowName); y = varIn.y(rowName);
+            % Collapse to single column
+            x = cellfun(@(X) median(X,2),x,'Uniformoutput',false);
+            y = cellfun(@(X) median(X,2),y,'Uniformoutput',false);
+            xy = cellfun(@(X,Y) [X Y], x,y,'Uniformoutput',false);
+            
+            % Transformation matrix
+            iSeq2AbTform = corrSeq2abTform.tform(rowName);
+            TF = cellfun(@isobject,iSeq2AbTform);
+            iSeq2AbTform(~TF) = cellfun(@projective2d,iSeq2AbTform(~TF),'Uniformoutput',false);
+            
+            % Transform region to section
+            xy = cellfun(@(X,Y) transformPointsForward(X,Y),iSeq2AbTform,xy,...
+                'Uniformoutput',false);
+            
+            xy = vertcat(xy{:});
+            
+            % Cell type
+            c = vertcat(varIn.codeID{rowName});
+            c = cellType(c);
+            
+            % Rolony image, use cell type index as value
+            im2 = TBS.xyzv2im(size(im),xy,c);
+            im2 = uint8(im2);
+            
+            im = cat(3,im2,im);
+        end
+        
     end
     
     methods (Static)    % Barcoded cell reconstruction ====================
