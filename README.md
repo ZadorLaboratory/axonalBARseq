@@ -1,6 +1,9 @@
 # axonalBARseq
 These codes are for mouse 65A
 
+# Structure of the codes & analysis
+<img src='https://user-images.githubusercontent.com/60980561/167521108-25124b75-708b-4e21-b69b-089ad1110f1b.png' width='600'>
+
 
 ## TBS
 Necessary, contains functions for all scripts
