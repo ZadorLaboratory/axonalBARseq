@@ -132,6 +132,15 @@ TF = any(mlapdSoma,2);
 disp(['Soma included in analysis: ',num2str(sum(TF))]);
 disp('08302022, two soma were excluded during flatmap registration.')
 
+% (02142023, median distance (um) to the injection center)
+TF = any(mlapdSoma,2);
+injCenter = median(xyzSoma(TF,:));
+D = pdist2(xyzSoma(TF,:),injCenter);
+D = median(D);
+% Convert from ccf to micron
+D = D/refSetting.refScale;
+disp(['Soma median distance to injection center (um): ',num2str(D)]);
+
 % mlapd map settings ======================================================
 % Area boundaries only include the middle layer
 
