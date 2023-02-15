@@ -662,7 +662,7 @@ classdef TBS % Terminal BARseq
             imageSetting.cameraOffset = 100;
             
             imageSetting.imageBits = 'uint16';
-            imageSetting.overlapPrecentage = 15;
+            imageSetting.overlapPrecentage = 17;
             imageSetting = TBS.getOverlapPixel(imageSetting);
             
             % Cell array for tile position
