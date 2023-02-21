@@ -1,6 +1,6 @@
 # axonalBARseq
 
-biorxiv: doi: https://doi.org/10.1101/2023.02.18.528865
+biorxiv: https://doi.org/10.1101/2023.02.18.528865
 
 Note:   
   1. The mouse used in the dataset is called EF65A or 65A.
