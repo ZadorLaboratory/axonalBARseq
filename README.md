@@ -1,5 +1,12 @@
 # axonalBARseq
-These codes are for mouse 65A
+
+biorxiv: doi: https://doi.org/10.1101/2023.02.18.528865
+
+Note:   
+  1. The mouse used in the dataset is called EF65A or 65A.
+  
+  (Ongoing) deposit raw and processed data to public database
+
 
 # Structure of the codes & analysis
 <img src='https://user-images.githubusercontent.com/60980561/167521108-25124b75-708b-4e21-b69b-089ad1110f1b.png' width='600'>
