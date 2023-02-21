@@ -1,4 +1,4 @@
-classdef TBS % Terminal BARseq
+classdef TBS 
     % Add Ab and registration functions
     
     methods (Static)    % General stuff ===================================
