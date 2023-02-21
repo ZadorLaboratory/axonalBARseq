@@ -5,9 +5,10 @@ biorxiv: https://doi.org/10.1101/2023.02.18.528865
 Note:   
   1. The mouse used in the dataset is called EF65A or 65A.
   2. All the scripts were writen in MATLAB (i.e. 2021a), additioanl toolboxes are needed (parallel computing, image processing, curve fitting, statistics and machine learning, computer vision, bioinformatics toolbox).
-  3. The numbers in the file names are version IDs. 
-  4. The processing and analysis pipelines are still under active development. Major changes are likely for the future axonal BARseq experiments.
-  5. Questions and comments are welcome! 
+  3. FIJI and MIJ (http://bigwww.epfl.ch/sage/soft/mij/) were used for data visualization.
+  4. The numbers in the file names are version IDs. 
+  5. The processing and analysis pipelines are still under active development. Major changes are likely for the future axonal BARseq experiments.
+  6. Questions and comments are welcome! 
   
   (Ongoing) deposit raw and processed data to public database
 
