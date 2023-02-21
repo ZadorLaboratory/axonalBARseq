@@ -4,6 +4,9 @@ biorxiv: https://doi.org/10.1101/2023.02.18.528865
 
 Note:   
   1. The mouse used in the dataset is called EF65A or 65A.
+  2. The numbers in the file name are version IDs. 
+  3. The processing and analysis pipelines are still under active development. Major changes are likely for the future axonal BARseq experiments.
+  4. Questions and comments are welcome! 
   
   (Ongoing) deposit raw and processed data to public database
 
@@ -19,23 +22,19 @@ Necessary, contains functions for all scripts
 ## imProcess_5d
 Image processing (i.e. max projection) for both sequencing and antibody data.
 
-Output image available, no need to rerun.
-
-Note: not recommend, updated script available.
+Processed image available, no need to rerun.
 
 
 ## abStitching_2
 Stithing DAPI/antibody stanining whole brain images.
 
-Output image available, no need to rerun.
-
-Note: not recommend, updated script available.
+Processed image available, no need to rerun.
 
 
 ## alignmentTest27
 Alignment and basecalling for every batch of experiments. 
 
-Output variable available, no need to refun.
+Output variables available, no need to refun.
 
 Output data need to be cleaned for the downstream analysis.
 
@@ -61,8 +60,7 @@ Output: ctxAP/MP/DepthPrctile; can be directly used for 65A, no need to rerun.
 Conatains two parts:
   1. register 3D volume to Allen CCF (Optional)
        Output: ref2AllenTform.mat; can be directly used for 65A, no need to rerun.
-       Note: angle adjustment procedure is not good, will have big modification for future experiments.
-  2. Visualize data in registered coordinates/flatmap (contains code for Fig 1E, SupFig 4E-K)
+  2. Visualize data in registered coordinates/flatmap (contains code for Fig 1E, SupFig 4G-I)
        
 ## analysis_65A_2
 Script for analysis of 65A data
