@@ -66,3 +66,8 @@ Conatains two parts:
        
 ## analysis_65A_2
 Script for analysis of 65A data
+
+## evaluateCCFalignment
+Script for CCF-registration, by manually selecting edges of brain regions.
+
+Output: roiCCFacc. roi selected for 65A-evaluation
