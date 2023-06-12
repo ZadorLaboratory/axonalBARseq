@@ -1,6 +1,7 @@
 % evaluate CCF aliment
 % By mannually selecting the lines/edges in the dataset and compared to CCF
-% 06122023
+% Output: roi selected for registered-65A: roiCCFacc.mat
+% 06122023 by LY
 
 clc
 
