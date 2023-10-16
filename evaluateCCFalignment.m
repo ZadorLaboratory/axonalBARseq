@@ -1,7 +1,7 @@
 % evaluate CCF aliment
 % By mannually selecting the lines/edges in the dataset and compared to CCF
 % Output: roi selected for registered-65A: roiCCFacc.mat
-% 06122023 by LY
+% 06122023 by LY, checked 10152023
 
 clc
 
@@ -359,10 +359,10 @@ for i = 1:max(ic)
                                                                                                                                                                   
     ind = sub2ind(size(iIm),ixyzc(:,2),ixyzc(:,1));
     
-%     % (Check point)
-%     test = false(size(iIm));
-%     test(ind) = true;
-%     imshowpair(iIm,test);
+    % (Check point)
+    test = false(size(iIm));
+    test(ind) = true;
+    imshowpair(iIm,test);
     
     TF = iIm(ind);
     D = zeros(size(TF));
