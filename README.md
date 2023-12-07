@@ -10,8 +10,21 @@ Note:
   5. The processing and analysis pipelines are still under active development. Major changes are likely for the future axonal BARseq experiments.
   6. Questions and comments are welcome! 
   
-  (Ongoing) deposit raw and processed data to public database
+  (Ongoing) deposit raw and processed data to public database    
+  
+<br>
 
+# Variables for quick testing
+We included four variables (xyz*/mlapd*.mat) for those who want to take a quick look at the data:
+
+* xyzDot and xyzSoma are the xyz-coordinates for rolonies (cell array) and soma (matrix) in CCFv3, with a voxel size of 25 µm.
+* mlapdDot and mlapdSoma are the ML-AP-depth coordinates in the cortex for rolonies (cell array) and soma (matrix). The units for ML and AP (columns 1 and 2) are microns, and the unit for depth (column 3) is the percentage of depth within the cortical column.
+
+Each row in these variables represents a barcoded cell, and you can locate the corresponding rolonies and soma locations using the row number. Please note that not all somas were identified due to technical issues (further details can be found in the paper), and these unidentified somas are represented as [0 0 0] in the soma variables. Additionally, only cortical rolonies were included in mlapdDot.
+
+Example: the three signle-cell examples in Fig. 5, barcode (row) 505, 1, 431.
+
+<br>
 
 # Structure of the codes & analysis
 <img src='https://user-images.githubusercontent.com/60980561/167521108-25124b75-708b-4e21-b69b-089ad1110f1b.png' width='600'>
