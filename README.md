@@ -80,7 +80,19 @@ Conatains two parts:
 ## analysis_65A_2
 Script for analysis of 65A data
 
-## evaluateCCFalignment
+
+## Others
+The codes are linked to the paper but are not essential for axonal BARseq.
+(This part is slightly messy...)
+
+### evaluateCCFalignment
 Script for CCF-registration, by manually selecting edges of brain regions.
 
 Output: roiCCFacc. roi selected for 65A-evaluation
+
+### rotatingBrain
+Code for generating the rotating brain video/image
+
+### fiberBundle_Allen
+Code for analysis links to the Allen mouse connectivity dataset
+
