@@ -1,4 +1,4 @@
-classdef TBS 
+classdef TBS
     % Add Ab and registration functions
     
     methods (Static)    % General stuff ===================================
@@ -589,7 +589,12 @@ classdef TBS
             
             B = data./n;
         end
-        
+
+        %% Function:    nestTF
+        function TF = nestTF(TF,TF2)
+            TF(TF) = TF2;
+        end
+                
     end
     
     methods (Static)    % Default settings ================================
@@ -8744,11 +8749,11 @@ classdef TBS
             %           ctxML/AP/DepthPrctile, mat, reference value of
             %           corteical ML/AP/DepthPrecitle
             % Output:   mlapd, mat, coordiantes in ML/AP/Depth
-                        
+            
             disp('Function getMLAPD on progress...')
             
             % For cell input
-            cellTF = iscell(xyz);            
+            cellTF = iscell(xyz);
             if cellTF
                 sz = cellfun(@(X) size(X,1),xyz);
                 xyz = vertcat(xyz{:});
@@ -8809,12 +8814,80 @@ classdef TBS
             end
         end
         
+        %% Function:    mlapd2flatmapXYZ
+        % Description:  change mlapd coordinates into xyz of flatmap
+        function xyz = mlapd2flatmapXYZ(mlapd,refSetting,flatmap)
+            % Input:    mlapd, mat, ML/AP/depth-coordinates
+            %           refSetting, struct, referece setting
+            %           flatmap, mat, 
+            % Output:   xyz, mat, xyz-coordinates
+            
+            refScale = refSetting.refScale;
+            
+            cellTF = iscell(mlapd);
+            
+            if cellTF
+                sz = cellfun(@(X) size(X,1),mlapd);
+                mlapd = vertcat(mlapd{:});
+            end
+            
+            xyz = mlapd;
+            
+            % Change z from 100% to 1000 um
+            xyz(:,3) = xyz(:,3).*(1000/100);
+            % Change to pixel coordinates
+            xyz = xyz.*refScale;
+            % ML in the left hemisphere assigned as minus, corrected it using flatmap
+            % width
+            xyz(:,1) = xyz(:,1)+ size(flatmap,2)/2;
+            
+            if cellTF
+                xyz = mat2cell(xyz,sz);
+            end            
+        end
+        
+        %% Function:    mlapd2flatmapV
+        % Description:  get value on flatmap stack using mlapd coordinates
+        function v = mlapd2flatmapV(mlapd,refSetting,flatmap,edgeCorrect)
+            % Note, scatteredInterpolant takes 2 min, so make it as input
+            % argument
+            % Input:    flatmapObj, scattered data interpolant object
+            %           refSetting, struct, referece setting
+            %           flatmap, mat, 
+            %           mlapd, cell, with mlapd coordinates in um
+            % Output:   v, cell, corresponding value on flatmap for mlapd
+                      
+            cellTF = iscell(mlapd);
+            
+            if cellTF
+                sz = cellfun(@(X) size(X,1),mlapd);
+                mlapd = vertcat(mlapd{:});
+            end
+            
+            xyz = TBS.mlapd2flatmapXYZ(mlapd,refSetting,flatmap);
+            
+            if edgeCorrect
+                SE = strel('disk',2);
+                TF = flatmap > 0;
+                flatmap2 = imdilate(flatmap,SE);
+                flatmap2(TF) = 0;
+                flatmap = max(flatmap,flatmap2);
+            end
+            
+            v = interp3(flatmap,xyz(:,1),xyz(:,2),xyz(:,3));
+            
+            if cellTF
+                v = mat2cell(v,sz);
+            end
+        end
+        
         %% Function:    plotRegionRef
         % Discription:  plot flatmap region boundary and soma area
-        function plotRegionRef(mlapdSoma,regionOutlineFlat)
+        function plotRegionRef(mlapdSoma,regionOutlineFlat,isCtrl)
             % Input:    mlapdSoma, mat, soma ML/AP/Depth coordinates
             %           regionOutlineFlat, region boundary ML/AP/Depth
             %           coorindates
+            %           isCtrl, logical, whether is LatC exlcusion control
             % Output:   h, object, handel for the plot
             
             TF = any(mlapdSoma,2);
@@ -8832,6 +8905,12 @@ classdef TBS
             % Plot it as a disk
             rectangle('Position',[injCenter-[r r], [r r].*2],...
                 'Curvature',[1 1],'FaceColor','k')
+            
+            if nargin > 2 && isCtrl
+                % Plot disk in LatC
+                rectangle('Position',[injCenter.*[-1 1]-[r r], [r r].*2],...
+                    'Curvature',[1 1],'FaceColor','k')
+            end
             
             g = gca; g.YDir = 'reverse';
             % Flatmap2
@@ -8877,36 +8956,44 @@ classdef TBS
             end            
         end
         
-        %% Function:    nearSomaExcl
-        %  Discription: exclude rolony within a range of injection center
-        function mlapdDot = nearSomaExcl(mlapdDot,mlapdSoma,p,isCtrl)
+        %% Function:    nearSoma
+        %  Discription: whether rolony within a range of injection center
+        function TF = nearSoma(mlapdDot,mlapdSoma,p,isCtrl)
             % Input:    mlapdDot, cell, ML/AP/Depth coordinates of rolony
             %           mlapdSoma, mat, ML/AP/Depth coordinates of soma, for exclusion
             %           p, num, min percentage for exclusion
             %           isCtrl, logical, whether is a control including deleting
             %           similar area in the other side
-            % Output:   mlapdDot, cell
+            % Output:   TF, cell, whetherthe rolony is near injection
+            % center
             
             % Injection center (median) and radius
             TF = any(mlapdSoma,2);
             xy = mlapdSoma(TF,1:2);
             injCenter = median(xy,1);
-            r = pdist2(xy,injCenter);
+            r = pdist2(xy,injCenter);            
             r = prctile(r',p);
+            disp(['Function nearSoma: exclusion range on MLAP (um) ',num2str(r)]);
             
             % Delete dots closed to the injection site
             fh = @(X,Y) pdist2(X(:,1:2),injCenter)>= r;
-            mlapdDot = cellfun(@(X) X(fh(X),:),mlapdDot,'UniformOutput',false);
+            TF = cellfun(@(X) fh(X),mlapdDot,'UniformOutput',false);
+            mlapdDot = cellfun(@(X,Y) X(Y,:),mlapdDot,TF,'UniformOutput',false);
             
             % LatC local-exclusion control
             if isCtrl
                 fh = @(X,Y) pdist2(X(:,1:2),injCenter.*[-1 1])>= r;
-                mlapdDot = cellfun(@(X) X(fh(X),:),mlapdDot,'UniformOutput',false);
+                TF2 = cellfun(@(X) fh(X),mlapdDot,'UniformOutput',false);
+                mlapdDot = cellfun(@(X,Y) X(Y,:),mlapdDot,TF2,'UniformOutput',false);
+                
+                TF = cellfun(@(X,Y) TBS.nestTF(X,Y),TF,TF2,'UniformOutput',false);
+                disp('Current data is LatC local-exclusion control!');
             end
             
             % Delete 0
-            mlapdDot = cellfun(@(X) X(any(X,2),:),mlapdDot,'UniformOutput',false);
-        end
+            TF2 = cellfun(@(X) any(X,2),mlapdDot,'UniformOutput',false);
+            TF = cellfun(@(X,Y) TBS.nestTF(X,Y),TF,TF2,'UniformOutput',false);
+        end             
         
         %% Function:    inCtxCluster
         % Discription:  whether a rolony is within a cortical cluster
@@ -8967,7 +9054,7 @@ classdef TBS
         end
         
         %% Function:    plotSoma
-        % Description:  plot soma on ML-Depth axes
+        % Description:  plot soma on ML-Depth axes, with randomshuffle
         function plotSoma(mlapdSoma,c)
             % Input:    mlapdSoma, mat, ML-AP-Depth for soma location on flatmap
             %           c, vector, index
@@ -8980,25 +9067,32 @@ classdef TBS
             disp(['Total soma plotted: ',num2str(numel(I))]);
             
             figure; scatter(mlapdSoma(I,1),mlapdSoma(I,3),10,c(I),'filled');
-            ylabel('Soma depth (%)','FontSize',15);
+            ylabel('Soma depth (%)'); TBS.axLabelSettings('Myriad Pro',15);
             g = gca; g.YDir = 'reverse'; g.YLim = [0 100]; g.XTick = [];
             set(gcf,'Position',[100 100 300 300]);
         end
         
         %% Function:    kmeansDepthHist
         % Discription:  group depth histocounts, sort index using depth
-        function idx = kmeansDepthHist(X,k,C)
+        function idx = kmeansDepthHist(X,k,C,nTime)
             % Input:    X, mat, data input
             %           k, number, output group number
             %           C, mat, start centroid
+            %           nTime,
             % Output:   idx, vector, group number
             
+            % Tried using cumsum and 50% to sort, has an obvious line even
+            % added some noice 
             % X2 = cumsum(X,2);
+            
+            if nargin < 4
+                nTime = 50;
+            end
             
             if nargin == 3
                 idx = kmeans(X,k,'Start',C);
-            elseif nargin == 2
-                idx = kmeans(X,k,'Replicates',50);
+            elseif nargin == 2 || isempty(C)
+                idx = kmeans(X,k,'Replicates',nTime);
             end
             
             % % Mean max column of the group
@@ -9015,7 +9109,7 @@ classdef TBS
             % Use sorted rank as index
             idx = I(idx);            
         end
-        
+                
         %% Function:    depthHeatmapSetting
         % Discription:  figure settings for heatmap of projeciton histocounts
         function depthHeatmapSetting(h,X,edges)
@@ -9710,4 +9804,183 @@ classdef TBS
         
     end
     
+    methods (Static)    % Allen data analysis =============================
+        %% Function:    getNrrdAllen
+        % Description:  get nrrd files from Allen connectivity map (sagital)
+        function [im,fileName] = getNrrdAllen(fileName)
+            % Input:    fileName, str, whole or partial nrrd file name
+            % Output:   im, mat, coronal image file
+            %           fileName, str, complete file name
+            
+            if isnumeric(fileName)
+                fileName = num2str(fileName);
+            end
+            if ~contains(fileName,'nrrd')
+                fileName = ['*',fileName,'*.nrrd'];
+            end
+            fileName = ls(fileName);
+            
+            if isempty(fileName)
+                im = []; return
+            end
+            
+            im = nrrdread(fileName);
+            
+            % Transform from sagital to coronal
+            im = permute(im,[1 3 2]);
+        end
+        
+        %% Function:    im2flatmapAllen
+        % Description: convert image to flatmap
+        function flatmap = im2flatmapAllen(im,ctxML,ctxAP,ctxDepthPrctile,refScale,zFlatmap,method)
+            % Input:    im, mat, input image stack
+            %           ctxML/AP/DepthPrctile, mat, flatmap coordinates
+            %           refScale, num, scale for the reference map, pixel per micron
+            % Output:   flatmap, mat, flatmap image
+            
+            szIm = size(im);
+            szMap = size(ctxML);
+            if any(szIm ~= szMap)
+                error('Input image size does not match the reference size.')
+            end
+            
+            [row, col, z, v] = TBS.find3(im);
+            ind = sub2ind(szIm,row,col,z);
+            
+            if nargin <= 6
+                method = @(X) sum(X);
+            end
+            flatmap = TBS.stack2flatmapIm(ind,v,ctxML,ctxAP,ctxDepthPrctile,...
+                method,refScale);
+            
+            % Just because the 65A is reversed and the function is writen for that
+            % so need to reverse back
+            flatmap = fliplr(flatmap);
+            
+            if nargin < 6 || isempty(zFlatmap)
+                return
+            end
+            
+            % Depth resolution: 2.5%
+            zFlatmap = zFlatmap./2.5;
+            zFlatmap = round(zFlatmap);  
+            % 1st is upper boundary
+            zFlatmap = zFlatmap(2):zFlatmap(end);
+
+            flatmap = flatmap(:,:,zFlatmap);
+        end
+        
+        %% Function:    correctInjSide
+        % Description:  make the injection side on the left, basing on intensity
+        function im = correctInjSide(im)
+            % Input & output: im, mat, image as flatmap stack
+            
+            midLine = size(im,2)/2;
+            midLine = round(midLine);
+            
+            L = im(:,1:midLine,:);
+            R = im(:,midLine:end,:);
+            L = sum(L,'all');
+            R = sum(R,'all');
+            
+            if R > L
+                im = fliplr(im);
+            end            
+        end
+        
+        %% Function:    getLayerFlatmap
+        % Description:  transform layer stack to flatmap coordinate system
+        function layerFlat = getLayerFlatmap(layer,ctxML,ctxAP,ctxDepthPrctile,refScale)
+            % Input:    layer, mat, layer in xyz coordinates
+            %           ctxML/AP/DepthPrctile, mat, flatmap coordinates
+            %           refScale, num, scale for the reference map, pixel per micron
+            % Output:   layerFlat, mat, layer flatmap
+            
+            % Flat layer, get value using mode
+            layerFlat = TBS.im2flatmapAllen(layer,ctxML,ctxAP,ctxDepthPrctile,refScale,[],@mode);            
+%             % (Check point)
+%             MIJ.createImage(layerFlat);
+            
+            % Filling the gaps on ML-AP maps ==============================
+            % Filling neigboring pixels on 2D plate
+            SE = strel('disk',1);
+            
+            layerFlat = double(layerFlat);
+            
+            % valid pixels (pixels to be filled)
+            TF = any(layerFlat > 0,3);
+            
+            % set max 100 iterations
+            for i = 1:100
+                iTF = layerFlat > 0;
+                % Neigboring pixels in the empty areas
+                iTF = imdilate(iTF,SE) & TF & ~iTF;
+                
+                % Assign value to the empty pixels ------------------------
+                % Cannot use @median due to missing layer 4
+                % Use the min value if there is a collision
+                iLayer = imdilate(layerFlat,SE);
+                
+                iLayer2 = layerFlat;
+                iLayer2(iLayer2 == 0)=inf;
+                iLayer2 = imerode(iLayer2,SE);
+                
+                iLayer = min(iLayer,iLayer2);
+                
+                iLayer(~iTF) = 0;
+                layerFlat = max(layerFlat,iLayer);
+                
+                % Check whether all the pixels were filled ----------------
+                iTF = all(layerFlat,3);
+                if sum(TF & ~iTF,'all') == 0
+                    break
+                end
+            end
+            
+            % Correct errors within a column using median filter ==========
+            
+            sz = size(layerFlat);
+            layerFlat = reshape(layerFlat,[],sz(3));
+            layerFlat = medfilt2(layerFlat,[1 3]);
+            layerFlat = reshape(layerFlat,sz);
+        end
+        
+        %% Function:    layerFlatmapGradience
+        % Description:  add gradience for each layer on flatmap
+        function layerFlat = layerFlatmapGradience(layerFlat)
+            % Input & output:   layerFlatmap, layer info in flatmap
+            % cooridnate system
+            
+            sz = size(layerFlat);
+            layerFlat = reshape(layerFlat,[],sz(3));
+            
+            col = repmat(1:sz(3),size(layerFlat,1),1);
+            
+            layerFlat2 = zeros(size(layerFlat));
+            for i = 1:max(layerFlat,[],'all')
+                
+                iL = col;
+                
+                TF = layerFlat == i;
+                iL(~TF) = nan;
+                
+                % Set the first column as 0
+                minL = min(iL,[],2,'omitnan');
+                iL = iL - minL;
+                
+                % Normalized to the (last column + 1) = 1
+                maxL = max(iL,[],2,'omitnan');
+                maxL = maxL + 1;
+                iL = iL./maxL;
+                
+                iL = iL + i;
+                iL(~TF) = 0;
+                
+                layerFlat2 = max(layerFlat2,iL);
+            end
+            
+            layerFlat = reshape(layerFlat2,sz);
+        end
+        
+    end
 end
